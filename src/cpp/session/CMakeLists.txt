@@ -83,6 +83,7 @@ set (SESSION_SOURCE_FILES
    modules/SessionAuthoring.cpp
    modules/SessionBreakpoints.cpp
    modules/SessionCodeSearch.cpp
+   modules/SessionUserCommands.cpp
    modules/SessionConsole.cpp
    modules/SessionDependencies.cpp
    modules/SessionDiagnostics.cpp
@@ -106,6 +107,7 @@ set (SESSION_SOURCE_FILES
    modules/SessionPath.cpp
    modules/SessionPlots.cpp
    modules/SessionProfiler.cpp
+   modules/SessionRAddins.cpp
    modules/SessionRCompletions.cpp
    modules/SessionRHooks.cpp
    modules/SessionRParser.cpp
@@ -140,13 +142,14 @@ set (SESSION_SOURCE_FILES
    modules/presentation/SessionPresentation.cpp
    modules/presentation/PresentationLog.cpp
    modules/presentation/PresentationState.cpp
-   modules/presentation/PresentationOverlay.cpp
    modules/presentation/SlideMediaRenderer.cpp
    modules/presentation/SlideNavigationList.cpp
    modules/presentation/SlideParser.cpp
    modules/presentation/SlideQuizRenderer.cpp
    modules/presentation/SlideRenderer.cpp
    modules/presentation/SlideRequestHandler.cpp
+   modules/presentation/Tutorial.cpp
+   modules/presentation/TutorialInstaller.cpp
    modules/rmarkdown/SessionRMarkdown.cpp
    modules/rmarkdown/RMarkdownPresentation.cpp
    modules/shiny/SessionShiny.cpp
@@ -302,6 +305,11 @@ endif()
 
 # define executable
 add_executable(rsession ${SESSION_SOURCE_FILES} ${SESSION_HEADER_FILES})
+
+# skip libR RPATH at development time
+if(RSTUDIO_DEVELOPMENT OR RSTUDIO_RUN_IN_PLACE)
+   set_target_properties(rsession PROPERTIES SKIP_BUILD_RPATH TRUE)
+endif()
 
 # add origin rpath for suse/sles
 if(RSTUDIO_PACKAGE_BUILD_SLES)
@@ -461,7 +469,7 @@ if (NOT RSTUDIO_SESSION_WIN64)
               DESTINATION  ${RSTUDIO_INSTALL_BIN})
 
 
-      install(PROGRAMS "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/sumatra/2.4/SumatraPDF.exe"
+      install(PROGRAMS "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/sumatra/3.1.1/SumatraPDF.exe"
               DESTINATION  "${RSTUDIO_INSTALL_BIN}/sumatra")
       install(FILES resources/sumatrapdfrestrict.ini
                DESTINATION  "${RSTUDIO_INSTALL_BIN}/sumatra")

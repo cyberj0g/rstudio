@@ -96,6 +96,10 @@ public:
    const core::FilePath& file() const { return file_; }
    const core::FilePath& directory() const { return directory_; }
    const core::FilePath& scratchPath() const { return scratchPath_; }
+   const core::FilePath& sharedScratchPath() const 
+   { 
+      return sharedScratchPath_; 
+   }
 
    core::FilePath oldScratchPath() const;
 
@@ -161,6 +165,12 @@ public:
    void subscribeToFileMonitor(const std::string& featureName,
                                const FileMonitorCallbacks& cb);
 
+   // can this project be shared with other users?
+   bool supportsSharing();
+
+   // is the current user this project's owner?
+   bool ownedByUser();
+
 public:
    static core::r_util::RProjectBuildDefaults buildDefaults();
    static core::r_util::RProjectConfig defaultConfig();
@@ -191,6 +201,7 @@ private:
    core::FilePath file_;
    core::FilePath directory_;
    core::FilePath scratchPath_;
+   core::FilePath sharedScratchPath_;
    core::r_util::RProjectConfig config_;
    std::string defaultEncoding_;
    core::FilePath buildTargetPath_;

@@ -20,6 +20,13 @@ import com.google.gwt.core.client.JsArrayMixed;
 import com.google.gwt.core.client.JsArrayString;
 import com.google.gwt.dom.client.*;
 import com.google.gwt.dom.client.Element;
+import com.google.gwt.event.dom.client.HasAllKeyHandlers;
+import com.google.gwt.event.dom.client.KeyDownEvent;
+import com.google.gwt.event.dom.client.KeyDownHandler;
+import com.google.gwt.event.dom.client.KeyPressEvent;
+import com.google.gwt.event.dom.client.KeyPressHandler;
+import com.google.gwt.event.dom.client.KeyUpEvent;
+import com.google.gwt.event.dom.client.KeyUpHandler;
 import com.google.gwt.user.client.*;
 import com.google.gwt.user.client.ui.UIObject;
 
@@ -769,14 +776,32 @@ public class DomUtils
       element.style[name] = value;
    }-*/;
    
-   public static final native Element[] getElementsByClassName(String classes) /*-{
+   public static native final Element getElementById(String id) /*-{
+      return $doc.getElementById(id);
+   }-*/;
+   
+   public static Element[] getElementsByClassName(String classes)
+   {
+      Element documentEl = Document.get().cast();
+      return getElementsByClassName(documentEl, classes);
+   }
+   
+   public static final native Element[] getElementsByClassName(Element parent, String classes) /*-{
       var result = [];
-      var elements = $wnd.document.getElementsByClassName(classes);
+      var elements = parent.getElementsByClassName(classes);
       for (var i = 0; i < elements.length; i++) {
          result.push(elements[i]);
       }
       return result;
    }-*/;
+   
+   public static final Element getFirstElementWithClassName(Element parent, String classes)
+   {
+      Element[] elements = getElementsByClassName(parent, classes);
+      if (elements.length == 0)
+   	   return null;
+      return elements[0];
+   }
    
    public static final Element getParent(Element element, int times)
    {
@@ -795,4 +820,79 @@ public class DomUtils
       return $wnd.getComputedStyle(el);
    }-*/;
    
+   public static void toggleClass(Element element,
+                                  String cssClass,
+                                  boolean value)
+   {
+      if (value && !element.hasClassName(cssClass))
+         element.addClassName(cssClass);
+      
+      if (!value && element.hasClassName(cssClass))
+         element.removeClassName(cssClass);
+   }
+   
+   public interface NativeEventHandler
+   {
+      public void onNativeEvent(NativeEvent event);
+   }
+   
+   public static void addKeyHandlers(HasAllKeyHandlers widget,
+                                     final NativeEventHandler handler)
+   {
+      widget.addKeyDownHandler(new KeyDownHandler()
+      {
+         @Override
+         public void onKeyDown(final KeyDownEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+      
+      widget.addKeyPressHandler(new KeyPressHandler()
+      {
+         @Override
+         public void onKeyPress(final KeyPressEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+      
+      widget.addKeyUpHandler(new KeyUpHandler()
+      {
+         @Override
+         public void onKeyUp(final KeyUpEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+   }
+   
+   public interface ElementPredicate
+   {
+      public boolean test(Element el);
+   }
+   
+   public static Element findParentElement(Element el,
+   	                                     ElementPredicate predicate)
+   {
+      Element parent = el.getParentElement();
+      while (parent != null)
+      {
+         if (predicate.test(parent))
+            return parent;
+
+         parent = parent.getParentElement();
+      }
+      return null;
+   }
+   
+   public final static native Element elementFromPoint(int x, int y) /*-{
+      return $doc.elementFromPoint(x, y);
+   }-*/;
+   
+   public static final native void setSelectionRange(Element el, int start, int end)
+   /*-{
+      if (el.setSelectionRange)
+         el.setSelectionRange(start, end);
+   }-*/;
 }

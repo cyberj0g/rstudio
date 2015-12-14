@@ -166,7 +166,10 @@ void refreshCredentialsThenContinue(
 void signIn(const http::Request& request,
             http::Response* pResponse)
 {
-   auth::secure_cookie::remove(request, kUserId, "", pResponse);
+   auth::secure_cookie::remove(request,
+                               kUserId,
+                               "/",
+                               pResponse);
 
    std::map<std::string,std::string> variables;
    variables["action"] = applicationURL(request, kDoSignIn);
@@ -211,21 +214,22 @@ void setSignInCookies(const core::http::Request& request,
                       bool persist,
                       core::http::Response* pResponse)
 {
+   int staySignedInDays = server::options().authStaySignedInDays();
    boost::optional<boost::gregorian::days> expiry;
    if (persist && canStaySignedIn())
-      expiry = boost::gregorian::days(3652);
+      expiry = boost::gregorian::days(staySignedInDays);
    else
       expiry = boost::none;
 
    auth::secure_cookie::set(kUserId,
                             username,
                             request,
-                            boost::posix_time::time_duration(24*3652,
+                            boost::posix_time::time_duration(24*staySignedInDays,
                                                              0,
                                                              0,
                                                              0),
                             expiry,
-                            std::string(),
+                            "/",
                             pResponse);
 }
 
@@ -333,7 +337,11 @@ void signOut(const http::Request& request,
       onUserUnauthenticated(username);
    }
 
-   auth::secure_cookie::remove(request, kUserId, "", pResponse);
+   auth::secure_cookie::remove(request,
+                               kUserId,
+                               "/",
+                               pResponse);
+
    pResponse->setMovedTemporarily(request, auth::handler::kSignIn);
 }
 

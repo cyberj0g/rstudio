@@ -247,6 +247,10 @@
   <true/>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
+  <key>NSAppleScriptEnabled</key>
+  <true/>
+  <key>OSAScriptingDefinition</key>
+  <string>RStudio.sdef</string>
    <key>LSEnvironment</key>
    <dict>
       <key>DYLD_VERSIONED_FRAMEWORK_PATH</key>
@@ -254,5 +258,10 @@
    </dict>
   <key>LSMinimumSystemVersion</key>
   <string>10.6.0</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <true/>
+  </dict>
 </dict>
 </plist>

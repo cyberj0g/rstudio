@@ -18,9 +18,11 @@ import com.google.gwt.core.client.JsArrayString;
 
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.studio.client.common.codetools.CodeToolsServerOperations;
+import org.rstudio.studio.client.events.GetActiveDocumentContextEvent;
 import org.rstudio.studio.client.htmlpreview.model.HTMLPreviewServerOperations;
 import org.rstudio.studio.client.notebook.CompileNotebookOptions;
 import org.rstudio.studio.client.notebook.CompileNotebookResult;
+import org.rstudio.studio.client.rsconnect.model.RSConnectServerOperations;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchServerOperations;
@@ -47,7 +49,8 @@ public interface SourceServerOperations extends FilesServerOperations,
                                                 HTMLPreviewServerOperations,
                                                 BuildServerOperations,
                                                 PresentationServerOperations,
-                                                LintServerOperations
+                                                LintServerOperations,
+                                                RSConnectServerOperations
 {
    /**
     * Create a new, empty document, without a path but with a unique ID, and
@@ -216,4 +219,18 @@ public interface SourceServerOperations extends FilesServerOperations,
    
    public void executeRCode(String code,
                             ServerRequestCallback<String> requestCallback);
+   
+   public void getSourceDocument(String docId,
+                ServerRequestCallback<SourceDocument> requestCallback);
+   
+   public void createShinyApp(String appName,
+                              String appType,
+                              String appDir,
+                              ServerRequestCallback<JsArrayString> requestCallback);
+   
+   public void getActiveDocumentContextCompleted(GetActiveDocumentContextEvent.Data data,
+                                                 ServerRequestCallback<Void> requestCallback);
+   
+   public void setSourceDocumentDirty(String docId, boolean dirty,
+         ServerRequestCallback<Void> requestCallback);
 }

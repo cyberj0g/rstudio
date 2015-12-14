@@ -1,7 +1,7 @@
 /*
  * RSessionContext.cpp
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-15 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -33,31 +33,167 @@
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
 
-#define kSessionSuffix "-session"
+#include <core/r_util/RActiveSessions.hpp>
+#include <core/r_util/RProjectFile.hpp>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
+
+#define kSessionSuffix "-d"
+#define kProjectNone   "none"
 
 namespace rstudio {
 namespace core {
 namespace r_util {
 
-namespace {
+SessionScope SessionScope::fromProject(
+                               const std::string& project,
+                               const std::string& id,
+                               const FilePathToProjectId& filePathToProjectId)
+{
+   if (project != kProjectNone)
+   {
+      ProjectId projectId = filePathToProjectId(project);
+      return SessionScope(projectId, id);
+   }
+   else
+   {
+      return projectNone(id);
+   }
+}
+
+
+std::string SessionScope::projectPathForScope(
+                               const SessionScope& scope,
+                               const ProjectIdToFilePath& projectIdToFilePath)
+{
+   return projectIdToFilePath(scope.projectId());
+}
+
+
+SessionScope SessionScope::fromProjectId(const ProjectId& project,
+                                         const std::string& id)
+{
+   return SessionScope(project, id);
+}
+
+SessionScope SessionScope::projectNone(const std::string& id)
+{
+   return SessionScope(ProjectId(kProjectNoneId), id);
+}
+
+bool SessionScope::isProjectNone() const
+{
+   return project_.id() == kProjectNoneId;
+}
+
+bool SessionScope::isWorkspaces() const
+{
+   return project_.id() == kWorkspacesId;
+}
+
+bool isSharedPath(const std::string& projectPath,
+                  const core::FilePath& userHomePath)
+{
+#ifndef _WIN32
+   // ensure this is a real path
+   FilePath projectDir = FilePath::resolveAliasedPath(projectPath,
+                                                      userHomePath);
+   if (!projectDir.exists())
+      return false;
+
+   struct stat st;
+   if (::stat(projectDir.absolutePath().c_str(), &st) == 0)
+   {
+      // consider this project to be shared if we aren't the owner
+      if (st.st_uid != ::getuid())
+      {
+         return true;
+      }
+   }
+   else
+   {
+      Error error = systemError(errno, ERROR_LOCATION);
+      error.addProperty("path", projectDir.absolutePath());
+      LOG_ERROR(error);
+   }
+
+#endif
+   return false;
+}
+
+SessionScopeState validateSessionScope(const SessionScope& scope,
+                          const core::FilePath& userHomePath,
+                          const core::FilePath& userScratchPath,
+                          core::r_util::ProjectIdToFilePath projectIdToFilePath,
+                          bool projectSharingEnabled,
+                          std::string* pProjectFilePath)
+{
+   // does this session exist?
+   r_util::ActiveSessions activeSessions(userScratchPath);
+   boost::shared_ptr<r_util::ActiveSession> pSession
+                                          = activeSessions.get(scope.id());
+   if (pSession->empty() || !pSession->validate(userHomePath,
+                                                projectSharingEnabled))
+      return ScopeInvalidSession;
+
+   // if this isn't project none then check if the project exists
+   if (!scope.isProjectNone())
+   {
+      // lookup the project path by id
+      std::string project = r_util::SessionScope::projectPathForScope(
+               scope,
+               projectIdToFilePath);
+      if (project.empty())
+         return ScopeMissingProject;
+
+      // if session points to another project then the scope is invalid
+      if (project != pSession->project())
+         return ScopeInvalidProject;
+
+      // get the path to the project directory
+      FilePath projectDir = FilePath::resolveAliasedPath(project, userHomePath);
+      if (!projectDir.exists())
+         return ScopeMissingProject;
+
+      // get the path to the project file
+      FilePath projectPath = r_util::projectFromDirectory(projectDir);
+      if (!projectPath.exists())
+         return ScopeMissingProject;
+
+      // record path to project file
+      *pProjectFilePath = projectPath.absolutePath();
+   }
+   else
+   {
+      // if the session project isn't project none then it's invalid
+      if (pSession->project() != kProjectNone)
+         return ScopeInvalidProject;
+   }
+
+   // if we got this far the scope is valid, do one final check for
+   // trying to open a shared project if sharing is disabled
+   if (!projectSharingEnabled &&
+       r_util::isSharedPath(*pProjectFilePath, userHomePath))
+   {
+      return r_util::ScopeMissingProject;
+   }
+   else
+   {
+      return ScopeValid;
+   }
+}
 
 std::string urlPathForSessionScope(const SessionScope& scope)
 {
    // get a URL compatible project path
-   std::string project = http::util::urlEncode(scope.project);
+   std::string project = http::util::urlEncode(scope.projectId().asString());
    boost::algorithm::replace_all(project, "%2F", "/");
 
    // create url
-   boost::format fmt("/s/%1%/~%2%/");
-   return boost::str(fmt % project % scope.id);
-}
-
-} // anonymous namespace
-
-
-SessionScope projectNoneSessionScope()
-{
-   return SessionScope("default", "0");
+   boost::format fmt("/s/%1%%2%/");
+   return boost::str(fmt % project % scope.id());
 }
 
 void parseSessionUrl(const std::string& url,
@@ -65,15 +201,18 @@ void parseSessionUrl(const std::string& url,
                      std::string* pUrlPrefix,
                      std::string* pUrlWithoutPrefix)
 {
-   static boost::regex re("/s/(.+?)/~(\\d+)/");
+   static boost::regex re("/s/([A-Fa-f0-9]{5})([A-Fa-f0-9]{8})([A-Fa-f0-9]{8})/");
 
    boost::smatch match;
    if (boost::regex_search(url, match, re))
    {
       if (pScope)
       {
-         pScope->project = http::util::urlDecode(match[1]);
-         pScope->id = match[2];
+         std::string user = http::util::urlDecode(match[1]);
+         std::string project = http::util::urlDecode(match[2]);
+         std::string id = match[3];
+         *pScope = r_util::SessionScope::fromProjectId(
+                  ProjectId(project, user), id);
       }
       if (pUrlPrefix)
       {
@@ -115,10 +254,10 @@ std::string createSessionUrl(const std::string& hostPageUrl,
 std::ostream& operator<< (std::ostream& os, const SessionContext& context)
 {
    os << context.username;
-   if (!context.scope.project.empty())
-      os << " -- " << context.scope.project;
-   if (!context.scope.id.empty())
-      os << " [" << context.scope.id << "]";
+   if (!context.scope.project().empty())
+      os << " -- " << context.scope.project();
+   if (!context.scope.id().empty())
+      os << " [" << context.scope.id() << "]";
    return os;
 }
 
@@ -127,17 +266,21 @@ std::string sessionScopeFile(std::string prefix,
                              const SessionScope& scope)
 {   
    // resolve project path
-   std::string project = scope.project;
+   ProjectId projectId = scope.projectId();
+   std::string project = scope.isProjectNone() || scope.isWorkspaces() ?
+            projectId.id() : projectId.asString();
+
    if (!project.empty())
    {
-      // pluralize the prefix so there is no conflict when switching
-      // between the single file and directory based schemas
-      prefix += "s";
+      // pluralize in the presence of project context so there
+      // is no conflict when switching between single and multi-session
+      if (!scope.project().empty())
+         prefix += "s";
 
       if (!boost::algorithm::starts_with(project, "/"))
          project = "/" + project;
 
-      if (!scope.id.empty())
+      if (!scope.id().empty())
       {
          if (!boost::algorithm::ends_with(project, "/"))
             project = project + "/";
@@ -145,17 +288,79 @@ std::string sessionScopeFile(std::string prefix,
    }
 
    // return file path
-   return prefix + project + scope.id;
+   return prefix + project + scope.id();
+}
+
+std::string sessionScopePrefix(const std::string& username)
+{
+   return username + kSessionSuffix;
+}
+
+std::string sessionScopesPrefix(const std::string& username)
+{
+   // pluralize the prefix so there is no conflict when switching
+   // between the single file and directory based schemas
+   return username + kSessionSuffix "s";
 }
 
 std::string sessionContextFile(const SessionContext& context)
 {
-   return sessionScopeFile(context.username + kSessionSuffix, context.scope);
+   return sessionScopeFile(sessionScopePrefix(context.username), context.scope);
+}
+
+std::string generateScopeId()
+{
+   std::vector<std::string> reserved;
+
+   // reserved ids we are using now
+   reserved.push_back(kProjectNoneId);
+   reserved.push_back(kWorkspacesId);
+
+   // a few more for future expansion
+   reserved.push_back("21f2ed72");
+   reserved.push_back("2cb256d2");
+   reserved.push_back("3c9ab5a7");
+   reserved.push_back("f468a750");
+   reserved.push_back("6ae9dc1b");
+   reserved.push_back("1d717df9");
+   reserved.push_back("6d3c4c0e");
+   reserved.push_back("a142989c");
+   reserved.push_back("c2612a98");
+   reserved.push_back("2b84c99a");
+
+   return generateScopeId(reserved);
+}
+
+std::string generateScopeId(const std::vector<std::string>& reserved)
+{
+   // generate id
+   std::string id = core::string_utils::toLower(
+                                 core::system::generateShortenedUuid());
+
+   // ensure 8 chracters
+   if (id.length() != kProjectIdLen)
+   {
+      if (id.length() > kProjectIdLen)
+      {
+         id = id.substr(0, kProjectIdLen);
+      }
+      else
+      {
+         size_t diff = kProjectIdLen - id.length();
+         std::string pad(diff, 'f');
+         id += pad;
+      }
+   }
+
+   // try again if this id is reserved
+   if (std::find(reserved.begin(), reserved.end(), id) != reserved.end())
+      return generateScopeId(reserved);
+   else
+      return id;
 }
 
 } // namespace r_util
 } // namespace core 
 } // namespace rstudio
-
 
 

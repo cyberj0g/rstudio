@@ -33,6 +33,7 @@
 #include <r/RJson.hpp>
 #include <r/ROptions.hpp>
 #include <r/RUtil.hpp>
+#include <r/RRoutines.hpp>
 
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionConsoleProcess.hpp>
@@ -84,6 +85,7 @@ public:
                                               int sourceLine,
                                               const std::string& format,
                                               const std::string& encoding,
+                                              const std::string& paramsFile,
                                               bool sourceNavigation,
                                               bool asTempfile,
                                               bool asShiny)
@@ -92,7 +94,7 @@ public:
                                                          sourceLine,
                                                          sourceNavigation,
                                                          asShiny));
-      pRender->start(format, encoding, asTempfile);
+      pRender->start(format, encoding, paramsFile, asTempfile);
       return pRender;
    }
 
@@ -139,6 +141,7 @@ private:
 
    void start(const std::string& format,
               const std::string& encoding,
+              const std::string& paramsFile,
               bool asTempfile)
    {
       Error error;
@@ -185,6 +188,12 @@ private:
       if (!format.empty())
       {
          renderOptions += ", output_format = '" + format + "'";
+      }
+
+      // include params if specified
+      if (!paramsFile.empty())
+      {
+         renderOptions += ", params = readRDS('" + paramsFile + "')";
       }
 
       // output to a temporary directory if specified (no need to do this
@@ -255,10 +264,10 @@ private:
       // render command
       boost::format fmt("%1%('%2%', %3% %4%);");
       std::string cmd = boost::str(fmt %
-                                   renderFunc %
-                                   targetFile %
-                                   extraParams %
-                                   renderOptions);
+                             renderFunc %
+                             string_utils::singleQuotedStrEscape(targetFile) %
+                             extraParams %
+                             renderOptions);
 
       // start the async R process with the render command
       allOutput_.clear();
@@ -707,13 +716,26 @@ bool isRenderRunning()
 }
 
 
+// environment variables to initialize
+const char * const kRStudioPandoc = "RSTUDIO_PANDOC";
+const char * const kRmarkdownMathjaxPath = "RMARKDOWN_MATHJAX_PATH";
+
 void initEnvironment()
 {
+   // set RSTUDIO_PANDOC (leave existing value alone)
+   std::string rstudioPandoc = core::system::getenv(kRStudioPandoc);
+   if (rstudioPandoc.empty())
+      rstudioPandoc = session::options().pandocPath().absolutePath();
    r::exec::RFunction sysSetenv("Sys.setenv");
-   sysSetenv.addParam("RSTUDIO_PANDOC",
-                      session::options().pandocPath().absolutePath());
-   sysSetenv.addParam("RMARKDOWN_MATHJAX_PATH",
-                      session::options().mathjaxPath().absolutePath());
+   sysSetenv.addParam(kRStudioPandoc, rstudioPandoc);
+
+   // set RMARKDOWN_MATHJAX_PATH (leave existing value alone)
+   std::string rmarkdownMathjaxPath = core::system::getenv(kRmarkdownMathjaxPath);
+   if (rmarkdownMathjaxPath.empty())
+     rmarkdownMathjaxPath = session::options().mathjaxPath().absolutePath();
+   sysSetenv.addParam(kRmarkdownMathjaxPath, rmarkdownMathjaxPath);
+
+   // call Sys.setenv
    Error error = sysSetenv.call();
    if (error)
       LOG_ERROR(error);
@@ -767,6 +789,7 @@ void doRenderRmd(const std::string& file,
                  int line,
                  const std::string& format,
                  const std::string& encoding,
+                 const std::string& paramsFile,
                  bool sourceNavigation,
                  bool asTempfile,
                  bool asShiny,
@@ -784,6 +807,7 @@ void doRenderRmd(const std::string& file,
                line,
                format,
                encoding,
+               paramsFile,
                sourceNavigation,
                asTempfile,
                asShiny);
@@ -795,20 +819,21 @@ Error renderRmd(const json::JsonRpcRequest& request,
                 json::JsonRpcResponse* pResponse)
 {
    int line = -1;
-   std::string file, format, encoding;
+   std::string file, format, encoding, paramsFile;
    bool asTempfile, asShiny = false;
    Error error = json::readParams(request.params,
                                   &file,
                                   &line,
                                   &format,
                                   &encoding,
+                                  &paramsFile,
                                   &asTempfile,
                                   &asShiny);
    if (error)
       return error;
 
-   doRenderRmd(file, line, format, encoding, true, asTempfile, asShiny,
-               pResponse);
+   doRenderRmd(file, line, format, encoding, paramsFile,
+               true, asTempfile, asShiny, pResponse);
 
    return Success();
 }
@@ -827,8 +852,8 @@ Error renderRmdSource(const json::JsonRpcRequest& request,
    if (error)
       return error;
 
-   doRenderRmd(rmdTempFile.absolutePath(), -1, "", "UTF-8", false, false, false,
-               pResponse);
+   doRenderRmd(rmdTempFile.absolutePath(), -1, "", "UTF-8", "",
+               false, false, false, pResponse);
 
    return Success();
 }
@@ -853,7 +878,12 @@ Error terminateRenderRmd(const json::JsonRpcRequest& request,
 // return the path to the local copy of MathJax
 FilePath mathJaxDirectory()
 {
-   return session::options().mathjaxPath();
+   // prefer the environment variable if it exists
+   std::string mathjaxPath = core::system::getenv(kRmarkdownMathjaxPath);
+   if (!mathjaxPath.empty() && FilePath::exists(mathjaxPath))
+      return FilePath(mathjaxPath);
+   else
+      return session::options().mathjaxPath();
 }
 
 // Handles a request for RMarkdown output. This request embeds the name of
@@ -1051,7 +1081,30 @@ Error prepareForRmdChunkExecution(const json::JsonRpcRequest& request,
    return Success();
 }
 
+
+SEXP rs_paramsFileForRmd(SEXP fileSEXP)
+{
+   static std::map<std::string,std::string> s_paramsFiles;
+
+   std::string file = r::sexp::safeAsString(fileSEXP);
+
+   using namespace module_context;
+   if (s_paramsFiles.find(file) == s_paramsFiles.end())
+      s_paramsFiles[file] = createAliasedPath(tempFile("rmdparams", "rds"));
+
+   r::sexp::Protect rProtect;
+   return r::sexp::create(s_paramsFiles[file], &rProtect);
+}
+
+
+
 } // anonymous namespace
+
+bool knitParamsAvailable()
+{
+   return module_context::isPackageVersionInstalled("rmarkdown", "0.7.3") &&
+          module_context::isPackageVersionInstalled("knitr", "1.10.18");
+}
 
 bool rmarkdownPackageAvailable()
 {
@@ -1069,6 +1122,12 @@ Error initialize()
 {
    using boost::bind;
    using namespace module_context;
+
+   R_CallMethodDef methodDef ;
+   methodDef.name = "rs_paramsFileForRmd" ;
+   methodDef.fun = (DL_FUNC)rs_paramsFileForRmd ;
+   methodDef.numArgs = 1;
+   r::routines::addCallMethod(methodDef);
 
    initEnvironment();
 

@@ -223,6 +223,7 @@ Error openDocument(const json::JsonRpcRequest& request,
    json::Object jsonDoc;
    writeDocToJson(pDoc, &jsonDoc);
    pResponse->setResult(jsonDoc);
+
    return Success();
 } 
 
@@ -300,7 +301,7 @@ Error saveDocumentCore(const std::string& contents,
 
       // write the contents to the file
       error = writeStringToFile(fullDocPath, encoded,
-                                options().sourcePersistLineEnding());
+                                module_context::lineEndings(fullDocPath));
       if (error)
          return error ;
 
@@ -945,6 +946,61 @@ Error setDocOrder(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error getSourceDocument(const json::JsonRpcRequest& request,
+                        json::JsonRpcResponse* pResponse)
+{
+   std::string id;
+   Error error = json::readParams(request.params, &id);
+   if (error)
+      return error;
+
+   // get the document from the source database
+   boost::shared_ptr<SourceDocument> pDoc(new SourceDocument());
+   error = source_database::get(id, pDoc);
+   if (error)
+      return error;
+
+   // write the doc to JSON and return it
+   json::Object jsonDoc;
+   writeDocToJson(pDoc, &jsonDoc);
+   pResponse->setResult(jsonDoc);
+
+   return Success();
+}
+
+void onDocUpdated(boost::shared_ptr<SourceDocument> pDoc)
+{
+   source_database::events().onDocUpdated(pDoc);
+}
+
+Error setSourceDocumentDirty(const json::JsonRpcRequest& request,
+                             json::JsonRpcResponse* pResponse)
+{
+   std::string id;
+   bool dirty;
+   Error error = json::readParams(request.params, &id, &dirty);
+   if (error)
+      return error;
+
+   boost::shared_ptr<SourceDocument> pDoc(new SourceDocument());
+   error = source_database::get(id, pDoc);
+   if (error)
+      return error;
+   
+   pDoc->setDirty(dirty);
+
+   // if marking clean, ignore external edits too
+   if (!dirty)
+      pDoc->updateLastKnownWriteTime();
+
+   error = source_database::put(pDoc);
+   if (error)
+      return error;
+
+   onDocUpdated(pDoc);
+
+   return Success();
+}
 
 void enqueFileEditEvent(const std::string& file)
 {
@@ -958,8 +1014,9 @@ void enqueFileEditEvent(const std::string& file)
    // if it doesn't exist then create it
    if (!filePath.exists())
    {
-      Error error = core::writeStringToFile(filePath, "",
-                                            options().sourcePersistLineEnding());
+      Error error = core::writeStringToFile(
+                               filePath, "",
+                               module_context::lineEndings(filePath));
       if (error)
       {
          LOG_ERROR(error);
@@ -982,11 +1039,6 @@ void onSuspend(Settings*)
 // TODO: a resume followed by a client_init will cause us to call
 // source_database::list twice (which will cause us to read all of
 // the files twice). find a way to prevent this.
-
-void onDocUpdated(boost::shared_ptr<SourceDocument> pDoc)
-{
-   source_database::events().onDocUpdated(pDoc);
-}
 
 void onResume(const Settings&)
 {
@@ -1127,6 +1179,8 @@ Error initialize()
       (bind(registerRpcMethod, "get_minimal_source_path", getMinimalSourcePath))
       (bind(registerRpcMethod, "get_script_run_command", getScriptRunCommand))
       (bind(registerRpcMethod, "set_doc_order", setDocOrder))
+      (bind(registerRpcMethod, "get_source_document", getSourceDocument))
+      (bind(registerRpcMethod, "set_source_document_dirty", setSourceDocumentDirty))
       (bind(sourceModuleRFile, "SessionSource.R"));
    Error error = initBlock.execute();
    if (error)

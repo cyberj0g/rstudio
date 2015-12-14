@@ -24,9 +24,9 @@ public interface RMarkdownServerOperations extends CryptoServerOperations
 {
    void getRMarkdownContext(
             ServerRequestCallback<RMarkdownContext> requestCallback);
-    
+       
    void renderRmd(String file, int line, String format, String encoding,
-                  boolean asTempfile, boolean asShiny,
+                  String paramsFile, boolean asTempfile, boolean asShiny,
                   ServerRequestCallback<Boolean> requestCallback);
    
    void renderRmdSource(String source,
@@ -59,4 +59,7 @@ public interface RMarkdownServerOperations extends CryptoServerOperations
    
    void prepareForRmdChunkExecution(String id,
                                     ServerRequestCallback<Void> requestCallback);
+
+   void getRmdOutputInfo(String target,
+                ServerRequestCallback<RmdOutputInfo> resultCallback);
 }

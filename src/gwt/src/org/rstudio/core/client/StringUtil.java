@@ -25,6 +25,7 @@ import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.core.client.regex.Pattern.ReplaceOperation;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
@@ -69,6 +70,17 @@ public class StringUtil
    public static String formatFileSize(long size)
    {
       return formatFileSize(new Long(size).intValue());
+   }
+   
+   // return a friendly (not precise) elapsed time
+   public static String formatElapsedTime(int seconds)
+   {
+      if (seconds < 60)
+         return seconds + " second" + (seconds == 1 ? "" : "s");
+      else if (seconds < 3600)
+         return (seconds / 60) + " minute" + ((seconds / 60) == 1 ? "" : "s");
+      else 
+         return (seconds / 3600) + " hour" + ((seconds / 3600) == 1 ? "" : "s");
    }
    
    // Given a raw size, convert it to a human-readable value 
@@ -222,7 +234,17 @@ public class StringUtil
 
       return indent + str.replaceAll("\n", "\n" + indent);
    }
-
+   
+   public static String join(String delimiter, String... strings)
+   {
+      return join(strings, delimiter);
+   }
+   
+   public static String join(String[] collection, String delim)
+   {
+      return join(Arrays.asList(collection), delim);
+   }
+   
    public static String join(Collection<?> collection,
                              String delim)
    {
@@ -348,7 +370,8 @@ public class StringUtil
     * @return
     */
    public static String getCommonPrefix(String[] lines,
-                                        boolean allowPhantomWhitespace)
+                                        boolean allowPhantomWhitespace,
+                                        boolean skipWhitespaceOnlyLines)
    {
       if (lines.length == 0)
          return "";
@@ -384,6 +407,9 @@ public class StringUtil
       for (int i = 1; i < lines.length && prefix.length() > 0; i++)
       {
          String line = notNull(lines[i]);
+         if (line.trim().isEmpty() && skipWhitespaceOnlyLines)
+            continue;
+         
          int len = whitespaceExpansionAllowed ? Math.max(prefix.length(), line.length()) :
                    allowPhantomWhitespace ? prefix.length() :
                    Math.min(prefix.length(), line.length());
@@ -954,6 +980,29 @@ public class StringUtil
       return builder.toString();
    }
    
+   public static String prettyCamel(String string)
+   {
+      if (isNullOrEmpty(string))
+         return string;
+      
+      if (string.equals(string.toUpperCase()))
+         return string;
+      
+      String result = string.replaceAll("\\s*([A-Z])", " $1");
+      return result.substring(0, 1).toUpperCase() +
+             result.substring(1);
+   }
+   
+   public static native final String escapeRegex(String regexString) /*-{
+      var utils = $wnd.require("mode/utils");
+      return utils.escapeRegExp(regexString);
+   }-*/;
+   
+   public static final String getIndent(String line)
+   {
+      return RE_INDENT.match(line, 0).getGroup(0);
+   }
+   
    public static final HashMap<String, String> COMPLEMENTS =
          makeComplementsMap();
    
@@ -961,5 +1010,6 @@ public class StringUtil
    private static final NumberFormat PRETTY_NUMBER_FORMAT = NumberFormat.getFormat("#,##0.#####");
    private static final DateTimeFormat DATE_FORMAT
                           = DateTimeFormat.getFormat("MMM d, yyyy, h:mm a");
+   private static final Pattern RE_INDENT = Pattern.create("^\\s*", "");
 
 }

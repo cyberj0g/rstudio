@@ -218,6 +218,10 @@ public:
          threads_[i]->join();
    }
    
+   virtual bool isRunning()
+   {
+      return running_;
+   }
    
 private:
 
@@ -247,7 +251,7 @@ private:
 
          // request filter
          boost::bind(&AsyncServerImpl<ProtocolType>::connectionRequestFilter,
-                     this, _1, _2),
+                     this, _1, _2, _3),
 
          // response filter
          boost::bind(&AsyncServerImpl<ProtocolType>::connectionResponseFilter,
@@ -353,11 +357,12 @@ private:
    }
 
    void connectionRequestFilter(
+            boost::asio::io_service& ioService,
             http::Request* pRequest,
             http::RequestFilterContinuation continuation)
    {
       if (requestFilter_)
-         requestFilter_(pRequest, continuation);
+         requestFilter_(ioService, pRequest, continuation);
       else
          continuation(boost::shared_ptr<http::Response>());
    }

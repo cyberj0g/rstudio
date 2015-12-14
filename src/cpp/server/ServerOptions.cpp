@@ -169,7 +169,10 @@ ProgramStatus Options::read(int argc,
          "thread pool size")
       ("www-proxy-localhost",
          value<bool>(&wwwProxyLocalhost_)->default_value(true),
-         "proxy requests to localhost ports over main server port");
+         "proxy requests to localhost ports over main server port")
+      ("www-verify-user-agent",
+         value<bool>(&wwwVerifyUserAgent_)->default_value(true),
+         "verify that the user agent is compatible");
 
    // rsession
    Deprecated dep;
@@ -211,6 +214,9 @@ ProgramStatus Options::read(int argc,
         value<bool>(&authValidateUsers_)->default_value(
                                  core::system::effectiveUserIsRoot()),
         "validate that authenticated users exist on the target system")
+      ("auth-stay-signed-in-days",
+        value<int>(&authStaySignedInDays_)->default_value(30),
+       "number of days for stay signed in option")
       ("auth-encrypt-password",
         value<bool>(&authEncryptPassword_)->default_value(true),
         "encrypt password sent from login form")

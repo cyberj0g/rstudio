@@ -71,7 +71,7 @@ public class TriStateCheckBox extends Composite
       label_.addStyleName(RES.styles().checkboxLabel());
       panel_.add(label_);
       
-      setState(STATE_OFF);
+      setState(STATE_INDETERMINATE);
       
       initWidget(panel_);
    }
@@ -90,6 +90,20 @@ public class TriStateCheckBox extends Composite
       state_ = state;
    }
    
+   public void setValue(boolean value)
+   {
+      if (value)
+      {
+         checkboxInner_.setResource(ThemeResources.INSTANCE.checkboxOn());
+         state_ = STATE_ON;
+      }
+      else
+      {
+         checkboxInner_.setResource(ThemeResources.INSTANCE.checkboxOff());
+         state_ = STATE_OFF;
+      }
+   }
+   
    private void toggleState()
    {
       if (state_ == STATE_OFF)
@@ -100,6 +114,26 @@ public class TriStateCheckBox extends Composite
          setState(STATE_INDETERMINATE);
       
       ValueChangeEvent.fire(this, state_);
+   }
+   
+   public State getState()
+   {
+      return state_;
+   }
+   
+   public boolean isChecked()
+   {
+      return state_ == STATE_ON;
+   }
+   
+   public boolean isUnchecked()
+   {
+      return state_ == STATE_OFF;
+   }
+   
+   public boolean isIndeterminate()
+   {
+      return state_ == STATE_INDETERMINATE;
    }
    
    private final HorizontalPanel panel_;

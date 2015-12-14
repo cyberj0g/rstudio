@@ -76,6 +76,8 @@ public class SourceShim extends Composite
       @Handler
       public abstract void onNewRMarkdownDoc();
       @Handler
+      public abstract void onNewRShinyApp();
+      @Handler
       public abstract void onNewRHTMLDoc();
       @Handler
       public abstract void onNewRDocumentationDoc();
@@ -88,11 +90,15 @@ public class SourceShim extends Composite
       @Handler
       public abstract void onSaveAllSourceDocs();
       @Handler
+      public abstract void onCloseOtherSourceDocs();
+      @Handler
       public abstract void onCloseAllSourceDocs();
       @Handler
       public abstract void onFindInFiles();
       @Handler
       public abstract void onActivateSource();
+      @Handler
+      public abstract void onLayoutZoomSource();
       @Handler
       public abstract void onPreviousTab();
       @Handler
@@ -103,6 +109,14 @@ public class SourceShim extends Composite
       public abstract void onLastTab();
       @Handler
       public abstract void onSwitchToTab();
+      @Handler
+      public abstract void onMoveTabLeft();
+      @Handler
+      public abstract void onMoveTabRight();
+      @Handler
+      public abstract void onMoveTabToFirst();
+      @Handler
+      public abstract void onMoveTabToLast();
       @Handler
       public abstract void onSourceNavigateBack();
       @Handler
@@ -238,7 +252,7 @@ public class SourceShim extends Composite
    {
       if (source_ != null)
       {
-         source_.closeAllSourceDocs(caption, onCompleted);
+         source_.closeAllSourceDocs(caption, onCompleted, false);
       }
       else
       {
@@ -296,6 +310,20 @@ public class SourceShim extends Composite
       {
          onCompleted.execute();
       }
+   }
+   
+   public String getCurrentDocPath()
+   {
+      if (source_ == null || source_.getActiveEditor() == null)
+         return null;
+      return source_.getActiveEditor().getPath();
+   }
+   
+   public String getCurrentDocId()
+   {
+      if (source_ == null || source_.getActiveEditor() == null)
+         return null;
+      return source_.getActiveEditor().getId();
    }
    
    void setSource(Source source)

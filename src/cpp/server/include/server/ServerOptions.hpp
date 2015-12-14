@@ -124,6 +124,11 @@ public:
       return wwwProxyLocalhost_;
    }
 
+   bool wwwVerifyUserAgent() const
+   {
+      return wwwVerifyUserAgent_;
+   }
+
    // auth
    bool authNone()
    {
@@ -133,6 +138,11 @@ public:
    bool authValidateUsers()
    {
       return authValidateUsers_;
+   }
+
+   int authStaySignedInDays()
+   {
+      return authStaySignedInDays_;
    }
 
    bool authEncryptPassword()
@@ -185,6 +195,8 @@ public:
    {
       return monitorIntervalSeconds_;
    }
+
+   std::string gwtPrefix() const;
    
    std::string getOverlayOption(const std::string& name)
    {
@@ -238,8 +250,10 @@ private:
    bool wwwUseEmulatedStack_;
    int wwwThreadPoolSize_;
    bool wwwProxyLocalhost_;
+   bool wwwVerifyUserAgent_;
    bool authNone_;
    bool authValidateUsers_;
+   int authStaySignedInDays_;
    bool authEncryptPassword_;
    std::string authRequiredUserGroup_;
    std::string authPamHelperPath_;

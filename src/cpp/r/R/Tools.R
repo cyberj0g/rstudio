@@ -14,7 +14,8 @@
 #
 
 # target environment for rstudio supplemental tools
-.rs.Env <- attach(NULL,name="tools:rstudio")
+.rs.Env <- attach(NULL, name="tools:rstudio")
+assign(".rs.toolsEnv", envir = .rs.Env, function() { .rs.Env })
 
 # environment for completion hooks
 assign(".rs.RCompletionHooksEnv", new.env(parent = emptyenv()), envir = .rs.Env)
@@ -186,6 +187,23 @@ assign(envir = .rs.Env, ".rs.getVar", function(name)
 .rs.addFunction( "activateGraphicsDevice", function()
 {
    invisible(.Call("rs_activateGD"))
+})
+
+.rs.addFunction( "newDesktopGraphicsDevice", function()
+{
+   sysName <- Sys.info()[['sysname']]
+   if (identical(sysName, "Windows"))
+      windows()
+   else if (identical(sysName, "Darwin"))
+      quartz()
+   else if (capabilities("X11"))
+      X11()
+   else {
+      warning("Unable to create a new graphics device ",
+              "(RStudio device already active and only a ",
+              "single RStudio device is supported)", 
+              call. = FALSE)
+   }
 })
 
 # record an object to a file
@@ -439,12 +457,19 @@ assign(envir = .rs.Env, ".rs.getVar", function(name)
       .rs.setCRANRepos(reposUrl)
 })
 
+
+.rs.addFunction( "isCRANReposFromSettings", function()
+{
+   !is.null(attr(getOption("repos"), "RStudio"))
+})
+
+
 .rs.addFunction( "setCRANReposFromSettings", function(reposUrl)
 {
    # only set the repository if the repository was set by us
    # in the first place (it wouldn't be if the user defined a
    # repository in .Rprofile or called setRepositories directly)
-   if (!is.null(attr(getOption("repos"), "RStudio")))
+   if (.rs.isCRANReposFromSettings())
       .rs.setCRANRepos(reposUrl)
 })
 
@@ -609,4 +634,8 @@ assign(envir = .rs.Env, ".rs.getVar", function(name)
    } else {
       FALSE
    }
+})
+
+.rs.addFunction("rVersionString", function() {
+   as.character(getRversion())
 })

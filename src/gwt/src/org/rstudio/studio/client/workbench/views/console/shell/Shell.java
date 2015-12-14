@@ -24,7 +24,6 @@ import com.google.gwt.user.client.Command;
 import com.google.inject.Inject;
 
 import org.rstudio.core.client.BrowseCap;
-import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
@@ -41,6 +40,7 @@ import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
+import org.rstudio.studio.client.workbench.ConsoleEditorProvider;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.ClientInitState;
 import org.rstudio.studio.client.workbench.model.ClientState;
@@ -94,7 +94,8 @@ public class Shell implements ConsoleInputHandler,
                 Session session,
                 Commands commands,
                 UIPrefs uiPrefs, 
-                ErrorManager errorManager)
+                ErrorManager errorManager,
+                ConsoleEditorProvider tracker)
    {
       super() ;
 
@@ -109,6 +110,7 @@ public class Shell implements ConsoleInputHandler,
       historyManager_ = new CommandLineHistory(input_);
       browseHistoryManager_ = new CommandLineHistory(input_);
       prefs_ = uiPrefs;
+      tracker.setConsoleEditor(input_);
 
       inputAnimator_ = new ShellInputAnimator(view_.getInputEditorDisplay());
       
@@ -153,10 +155,7 @@ public class Shell implements ConsoleInputHandler,
       addKeyDownPreviewHandler(new HistoryCompletionManager(
             view_.getInputEditorDisplay(), server));
 
-      uiPrefs.insertMatching().bind(new CommandWithArg<Boolean>() {
-         public void execute(Boolean arg) {
-            AceEditorNative.setInsertMatching(arg);
-         }});
+      AceEditorNative.syncUiPrefs(uiPrefs);
 
       sessionInit(session);
    }
@@ -512,6 +511,16 @@ public class Shell implements ConsoleInputHandler,
                   case 'L':
                      Shell.this.onConsoleClear() ;
                      event.preventDefault() ;
+                     break;
+                  case 'A':
+                     event.stopPropagation();
+                     event.preventDefault();
+                     input_.goToLineStart();
+                     break;
+                  case 'E':
+                     event.stopPropagation();
+                     event.preventDefault();
+                     input_.goToLineEnd();
                      break;
                }
             }

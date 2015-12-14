@@ -57,7 +57,10 @@ public:
    int relativeOrder() const { return relativeOrder_; } 
    const core::json::Object& properties() const { return properties_; }
    const std::string& folds() const { return folds_; }
+   const std::string& collabServer() const { return collabServer_; }
    std::string getProperty(const std::string& name) const;
+   const std::time_t lastContentUpdate() const { return lastContentUpdate_; }
+   const std::time_t lastKnownWriteTime() const { return lastKnownWriteTime_; }
 
    // is this an untitled document?
    bool isUntitled() const;
@@ -98,6 +101,11 @@ public:
       relativeOrder_ = order;
    }
 
+   void setCollabServer(const std::string& server) 
+   {
+      collabServer_ = server;
+   }
+
    void checkForExternalEdit(std::time_t* pTime);
 
    void updateLastKnownWriteTime();
@@ -113,6 +121,8 @@ public:
    {
       type_ = type;
    }
+   
+   bool isRMarkdownDocument() const { return type_ == SourceDocumentTypeRMarkdown; }
    
    // is this an R, or potentially R-containing, source file?
    // TODO: Export these types as an 'enum' and provide converters.
@@ -143,10 +153,13 @@ private:
    std::string encoding_;
    std::string folds_;
    std::time_t lastKnownWriteTime_;
+   std::time_t lastContentUpdate_;
    bool dirty_;
    double created_;
    bool sourceOnSave_;
    int relativeOrder_;
+   std::string collabServer_;
+   std::string sourceWindow_;
    core::json::Object properties_;
    
 public:

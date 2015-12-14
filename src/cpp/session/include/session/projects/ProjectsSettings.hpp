@@ -19,30 +19,25 @@
 // header-only file for access to projects settings from many contexts
 // (main session thread, background threads, other processes, etc.)
 
-#include <string>
+#include <core/SharedSettings.hpp>
 
-#include <boost/algorithm/string/trim.hpp>
-
-#include <core/FilePath.hpp>
-#include <core/FileSerializer.hpp>
+#include <core/r_util/RSessionContext.hpp>
 
 #define kProjectsSettings              "projects_settings"
 #define kNextSessionProject            "next-session-project"
 #define kSwitchToProject               "switch-to-project"
-#define kProjectNone                   "none"
 #define kLastProjectPath               "last-project-path"
-#define kLastProjectOpenedPath         "last-project-opened-path"
 #define kAlwaysRestoreLastProject      "restoreLastProject"
 
 namespace rstudio {
 namespace session {
 namespace projects {
 
-class ProjectsSettings
+class ProjectsSettings : public core::SharedSettings
 {
 public:
    explicit ProjectsSettings(const core::FilePath& userScratchPath)
-      : settingsPath_(projectsSettingsPath(userScratchPath))
+      : core::SharedSettings(projectsSettingsPath(userScratchPath))
    {
    }
 
@@ -83,37 +78,6 @@ public:
          writeSetting(kLastProjectPath, "");
    }
 
-   std::string lastProjectOpened() const
-   {
-      std::string value = readSetting(kLastProjectOpenedPath);
-
-      // if we've never set this value before then migrate whatever
-      // value happens to be in nextSessionProject
-      if (value.empty())
-         value = nextSessionProject();
-
-      // if the value is still empty then set it to 'none'
-      if (value.empty())
-         value = kProjectNone;
-
-      return value;
-   }
-
-   void setLastProjectOpened(const std::string& lastProject)
-   {
-      writeSetting(kLastProjectOpenedPath, lastProject);
-   }
-
-   std::string readSetting(const char * const settingName) const
-   {
-      return readProjectsSetting(settingsPath_, settingName);
-   }
-
-   void writeSetting(const char * const settingName, const std::string& value)
-   {
-      writeProjectsSetting(settingsPath_, settingName, value);
-   }
-
 private:
 
    static core::FilePath projectsSettingsPath(
@@ -127,43 +91,6 @@ private:
 
       return settingsPath;
    }
-
-   static std::string readProjectsSetting(const core::FilePath& settingsPath,
-                                          const char * const settingName)
-   {
-      using namespace rstudio::core;
-      FilePath readPath = settingsPath.complete(settingName);
-      if (readPath.exists())
-      {
-         std::string value;
-         Error error = core::readStringFromFile(readPath, &value);
-         if (error)
-         {
-            LOG_ERROR(error);
-            return std::string();
-         }
-         boost::algorithm::trim(value);
-         return value;
-      }
-      else
-      {
-         return std::string();
-      }
-   }
-
-   static void writeProjectsSetting(const core::FilePath& settingsPath,
-                                    const char * const settingName,
-                                    const std::string& value)
-   {
-      using namespace rstudio::core;
-      FilePath writePath = settingsPath.complete(settingName);
-      Error error = core::writeStringToFile(writePath, value);
-      if (error)
-         LOG_ERROR(error);
-   }
-
-private:
-   core::FilePath settingsPath_;
 };
 
 

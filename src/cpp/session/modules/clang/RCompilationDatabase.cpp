@@ -161,8 +161,7 @@ std::string packageBuildFileHash()
    return ostr.str();
 }
 
-std::vector<std::string> parseCompilationResults(const FilePath& srcFile,
-                                                 const std::string& results)
+std::vector<std::string> parseCompilationResults(const std::string& results)
 {
    // compile args to return
    std::vector<std::string> compileArgs;
@@ -732,11 +731,34 @@ RCompilationDatabase::CompilationConfig
 {
    // validation: if this is Rcpp11 and we don't have the attributes
    // package then there's no way for us to execute sourceCpp
-   if (rcppPkg == "Rcpp11" && !module_context::isPackageInstalled("attributes"))
+   using namespace module_context;
+   if (rcppPkg == "Rcpp11" && !isPackageInstalled("attributes"))
+      return CompilationConfig();
+
+   // validation: if we don't have any version of Rcpp installed then
+   // we can't do sourceCpp
+   if (rcppPkg == "Rcpp" && !isPackageVersionInstalled("Rcpp", "0.10.1"))
       return CompilationConfig();
 
    // start with base args
    std::vector<std::string> args = baseCompilationArgs(true);
+
+
+   // if this is a header file we need to rename it as a temporary .cpp
+   // file so that R CMD SHLIB is willing to compile it
+   FilePath tempSrcFile = srcFile.parent().childPath(
+            kCompilationDbPrefix + core::system::generateUuid() + ".cpp");
+   RemoveOnExitScope removeOnExit(tempSrcFile, ERROR_LOCATION);
+   if (SourceIndex::isHeaderFile(srcFile))
+   {
+      Error error = srcFile.copy(tempSrcFile);
+      if (error)
+      {
+         LOG_ERROR(error);
+         return CompilationConfig();
+      }
+      srcFile = tempSrcFile;
+   }
 
    // execute sourceCpp
    core::system::ProcessResult result;
@@ -750,7 +772,6 @@ RCompilationDatabase::CompilationConfig
 
    // parse the compilation results
    std::vector<std::string> compileArgs = parseCompilationResults(
-                                                           srcFile,
                                                            result.stdOut);
    std::copy(compileArgs.begin(),
              compileArgs.end(),
@@ -798,7 +819,7 @@ std::vector<std::string> RCompilationDatabase::argsForRCmdSHLIB(
    else
    {
       // parse the compilation results
-      return parseCompilationResults(tempSrcFile, result.stdOut);
+      return parseCompilationResults(result.stdOut);
    }
 }
 
@@ -824,8 +845,9 @@ std::vector<std::string> RCompilationDatabase::rToolsArgs() const
    if (rToolsArgs_.empty())
    {
       // scan for Rtools
+      bool usingMingwGcc49 = module_context::usingMingwGcc49();
       std::vector<core::r_util::RToolsInfo> rTools;
-      Error error = core::r_util::scanRegistryForRTools(&rTools);
+      Error error = core::r_util::scanRegistryForRTools(usingMingwGcc49, &rTools);
       if (error)
          LOG_ERROR(error);
 
@@ -836,21 +858,10 @@ std::vector<std::string> RCompilationDatabase::rToolsArgs() const
       {
          if (module_context::isRtoolsCompatible(*it))
          {
-            FilePath rtoolsPath = it->installPath();
-
-            rToolsArgs_.push_back("-I" + rtoolsPath.childPath(
-               "gcc-4.6.3/i686-w64-mingw32/include").absolutePath());
-
-            rToolsArgs_.push_back("-I" + rtoolsPath.childPath(
-               "gcc-4.6.3/include/c++/4.6.3").absolutePath());
-
-            std::string bits = "-I" + rtoolsPath.childPath(
-               "gcc-4.6.3/include/c++/4.6.3/i686-w64-mingw32").absolutePath();
-#ifdef _WIN64
-            bits += "/64";
-#endif
-            rToolsArgs_.push_back(bits);
-
+            std::vector<std::string> clangArgs = it->clangArgs();
+            std::copy(clangArgs.begin(),
+                      clangArgs.end(),
+                      std::back_inserter(rToolsArgs_));
             break;
          }
       }

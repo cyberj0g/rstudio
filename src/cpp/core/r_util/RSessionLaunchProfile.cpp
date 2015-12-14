@@ -29,44 +29,28 @@ namespace r_util {
 
 namespace {
 
-json::Object optionsAsJson(const core::system::Options& options)
-{
-   json::Object optionsJson;
-   BOOST_FOREACH(const core::system::Option& option, options)
-   {
-      optionsJson[option.first] = option.second;
-   }
-   return optionsJson;
-}
-
-core::system::Options optionsFromJson(const json::Object& optionsJson)
-{
-   core::system::Options options;
-   BOOST_FOREACH(const json::Member& member, optionsJson)
-   {
-      std::string name = member.first;
-      json::Value value = member.second;
-      if (value.type() == json::StringType)
-         options.push_back(std::make_pair(name, value.get_str()));
-   }
-   return options;
-}
-
 json::Object contextAsJson(const SessionContext& context)
 {
    json::Object scopeJson;
    scopeJson["username"] = context.username;
-   scopeJson["project"] = context.scope.project;
-   scopeJson["id"] = context.scope.id;
+   scopeJson["project"] = context.scope.project();
+   scopeJson["id"] = context.scope.id();
    return scopeJson;
 }
 
 Error contextFromJson(const json::Object& contextJson, SessionContext* pContext)
 {
-   return json::readObject(contextJson,
+   std::string project, id;
+   Error error = json::readObject(contextJson,
                            "username", &(pContext->username),
-                           "project", &(pContext->scope.project),
-                           "id", &(pContext->scope.id));
+                           "project", &project,
+                           "id", &id);
+   if (error)
+      return error;
+
+   pContext->scope = r_util::SessionScope::fromProjectId(project, id);
+
+   return Success();
 }
 
 
@@ -88,8 +72,14 @@ Error cpuAffinityFromJson(const json::Array& affinityJson,
 
 json::Value toJson(RLimitType limit)
 {
-   boost::uint64_t value = safe_convert::numberTo<boost::uint64_t>(limit, 0);
-   return json::Value(value);
+   try
+   {
+      return json::Value(boost::uint64_t(limit));
+   }
+   catch(...)
+   {
+      return json::Value(0);
+   }
 }
 
 } // anonymous namespace
@@ -102,8 +92,8 @@ json::Object sessionLaunchProfileToJson(const SessionLaunchProfile& profile)
    profileJson["password"] = profile.password;
    profileJson["executablePath"] = profile.executablePath;
    json::Object configJson;
-   configJson["args"] = optionsAsJson(profile.config.args);
-   configJson["environment"] = optionsAsJson(profile.config.environment);
+   configJson["args"] = json::toJsonObject(profile.config.args);
+   configJson["environment"] = json::toJsonObject(profile.config.environment);
    configJson["stdInput"] = profile.config.stdInput;
    configJson["stdStreamBehavior"] = profile.config.stdStreamBehavior;
    configJson["priority"] = profile.config.limits.priority;
@@ -176,8 +166,8 @@ SessionLaunchProfile sessionLaunchProfileFromJson(
    }
 
    // populate config
-   profile.config.args = optionsFromJson(argsJson);
-   profile.config.environment = optionsFromJson(envJson);
+   profile.config.args = json::optionsFromJson(argsJson);
+   profile.config.environment = json::optionsFromJson(envJson);
    profile.config.stdInput = stdInput;
    profile.config.stdStreamBehavior =
             static_cast<core::system::StdStreamBehavior>(stdStreamBehavior);
@@ -193,6 +183,8 @@ SessionLaunchProfile sessionLaunchProfileFromJson(
    // return profile
    return profile;
 }
+
+
 
 } // namespace r_util
 } // namespace core 

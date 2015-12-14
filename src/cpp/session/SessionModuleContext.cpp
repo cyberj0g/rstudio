@@ -64,6 +64,7 @@
 
 #include <session/projects/SessionProjects.hpp>
 
+#include <session/SessionConstants.hpp>
 #include <session/SessionContentUrls.hpp>
 
 #include "modules/SessionBreakpoints.hpp"
@@ -128,7 +129,19 @@ SEXP rs_enqueClientEvent(SEXP nameSEXP, SEXP dataSEXP)
          type = session::client_events::kUnhandledError;
       else if (name == "enable_rstudio_connect")
          type = session::client_events::kEnableRStudioConnect;
-      
+      else if (name == "shiny_gadget_dialog")
+         type = session::client_events::kShinyGadgetDialog;
+      else if (name == "rmd_params_ready")
+         type = session::client_events::kRmdParamsReady;
+      else if (name == "jump_to_function")
+         type = session::client_events::kJumpToFunction;
+      else if (name == "replace_ranges")
+         type = session::client_events::kReplaceRanges;
+      else if (name == "send_to_console")
+         type = session::client_events::kSendToConsole;
+      else if (name == "get_active_document_context")
+         type = session::client_events::kGetActiveDocumentContext;
+
       if (type != -1)
       {
          ClientEvent event(type, data);
@@ -194,6 +207,12 @@ SEXP rs_rstudioProgramMode()
    return r::sexp::create(session::options().programMode(), &rProtect);
 }
 
+// get rstudio edition
+SEXP rs_rstudioEdition()
+{
+   return R_NilValue;
+}
+
 // get version
 SEXP rs_rstudioVersion()
 {
@@ -223,6 +242,13 @@ SEXP rs_rstudioCitation()
    {
       return citationSEXP;
    }
+}
+
+SEXP rs_setUsingMingwGcc49(SEXP usingSEXP)
+{
+   bool usingMingwGcc49 = r::sexp::asLogical(usingSEXP);
+   userSettings().setUsingMingwGcc49(usingMingwGcc49);
+   return R_NilValue;
 }
 
 // ensure file hidden
@@ -319,7 +345,7 @@ bool s_monitorByScanning = false;
 
 FilePath monitoredParentPath()
 {
-   FilePath monitoredPath = userScratchPath().complete("monitored");
+   FilePath monitoredPath = userScratchPath().complete(kMonitoredPath);
    Error error = monitoredPath.ensureDirectory();
    if (error)
       LOG_ERROR(error);
@@ -603,6 +629,34 @@ bool performDelayedWork(const boost::function<void()> &execute,
    return false;
 }
 
+bool isPackagePosixMakefile(const FilePath& srcPath)
+{
+   if (!srcPath.exists())
+      return false;
+
+   using namespace projects;
+   ProjectContext& context = session::projects::projectContext();
+   if (!context.hasProject())
+      return false;
+
+   if (context.config().buildType != r_util::kBuildTypePackage)
+      return false;
+
+   FilePath parentDir = srcPath.parent();
+   if (parentDir.filename() != "src")
+      return false;
+
+   FilePath packagePath = context.buildTargetPath();
+   if (parentDir.parent() != packagePath)
+      return false;
+
+   std::string filename = srcPath.filename();
+   return (filename == "Makevars" ||
+           filename == "Makevars.in" ||
+           filename == "Makefile" ||
+           filename == "Makefile.in");
+}
+
 } // anonymous namespeace
 
 void scheduleDelayedWork(const boost::posix_time::time_duration& period,
@@ -633,6 +687,33 @@ void onBackgroundProcessing(bool isIdle)
    executeScheduledCommands(&s_scheduledCommands);
    if (isIdle)
       executeScheduledCommands(&s_idleScheduledCommands);
+}
+
+core::string_utils::LineEnding lineEndings(const core::FilePath& srcFile)
+{
+   // potential special case for Makevars
+   if (userSettings().useNewlineInMakefiles() && isPackagePosixMakefile(srcFile))
+      return string_utils::LineEndingPosix;
+
+   // get the global default behavior
+   string_utils::LineEnding lineEndings = userSettings().lineEndings();
+
+   // use project-level override if available
+   using namespace session::projects;
+   ProjectContext& context = projectContext();
+   if (context.hasProject())
+   {
+      if (context.config().lineEndings != r_util::kLineEndingsUseDefault)
+         lineEndings = (string_utils::LineEnding)context.config().lineEndings;
+   }
+
+   // if we are doing no conversion (passthrough) and there is an existing file
+   // then we need to peek inside it to see what the existing line endings are
+   if (lineEndings == string_utils::LineEndingPassthrough)
+      string_utils::detectLineEndings(srcFile, &lineEndings);
+
+   // return computed lineEndings
+   return lineEndings;
 }
 
 Error readAndDecodeFile(const FilePath& filePath,
@@ -706,6 +787,23 @@ FilePath scopedScratchPath()
       return projects::projectContext().scratchPath();
    else
       return userScratchPath();
+}
+
+FilePath sharedScratchPath()
+{
+   if (projects::projectContext().hasProject())
+      return projects::projectContext().sharedScratchPath();
+   else
+      return userScratchPath();
+}
+
+FilePath sessionScratchPath()
+{
+   r_util::ActiveSession& active = activeSession();
+   if (!active.empty())
+      return active.scratchPath();
+   else
+      return scopedScratchPath();
 }
 
 FilePath oldScopedScratchPath()
@@ -904,6 +1002,28 @@ std::string rLocalHelpPort()
    if (error)
       LOG_ERROR(error);
    return port;
+}
+
+std::vector<FilePath> getLibPaths()
+{
+   std::vector<std::string> libPathsString;
+   r::exec::RFunction rfLibPaths(".libPaths");
+   Error error = rfLibPaths.call(&libPathsString);
+   if (error)
+      LOG_ERROR(error);
+
+   std::vector<FilePath> libPaths(libPathsString.size());
+   BOOST_FOREACH(const std::string& path, libPathsString)
+   {
+      libPaths.push_back(module_context::resolveAliasedPath(path));
+   }
+
+   return libPaths;
+}
+
+bool disablePackages()
+{
+   return !core::system::getenv("RSTUDIO_DISABLE_PACKAGES").empty();
 }
 
 // check if a package is installed
@@ -1161,6 +1281,52 @@ json::Object createFileSystemItem(const FilePath& filePath)
 {
    return createFileSystemItem(FileInfo(filePath));
 }
+
+std::string rVersion()
+{
+   std::string rVersion;
+   Error error = rstudio::r::exec::RFunction(".rs.rVersionString").call(
+                                                                  &rVersion);
+   if (error)
+      LOG_ERROR(error);
+   return rVersion;
+}
+
+std::string rHomeDir()
+{
+   // get the current R home directory
+   std::string rVersionHome;
+   Error error = rstudio::r::exec::RFunction("R.home").call(&rVersionHome);
+   if (error)
+      LOG_ERROR(error);
+   return rVersionHome;
+}
+
+
+r_util::ActiveSession& activeSession()
+{
+   static boost::shared_ptr<r_util::ActiveSession> pSession;
+   if (!pSession)
+   {
+      std::string id = options().sessionScope().id();
+      if (!id.empty())
+         pSession = activeSessions().get(id);
+      else
+         pSession = activeSessions().emptySession();
+   }
+   return *pSession;
+}
+
+
+r_util::ActiveSessions& activeSessions()
+{
+   static boost::shared_ptr<r_util::ActiveSessions> pSessions;
+   if (!pSessions)
+      pSessions.reset(new r_util::ActiveSessions(userScratchPath()));
+   return *pSessions;
+}
+
+
 
 std::string libPathsString()
 {
@@ -1656,6 +1822,61 @@ std::string CRANReposURL()
    return url;
 }
 
+std::string rstudioCRANReposURL()
+{
+   std::string protocol = userSettings().securePackageDownload() ?
+                                                           "https" : "http";
+   return protocol + "://cran.rstudio.com/";
+}
+
+SEXP rs_rstudioCRANReposUrl()
+{
+   r::sexp::Protect rProtect;
+   return r::sexp::create(rstudioCRANReposURL(), &rProtect);
+}
+
+std::string downloadFileMethod(const std::string& defaultMethod)
+{
+   std::string method;
+   Error error = r::exec::evaluateString(
+                           "getOption('download.file.method', '" +
+                            defaultMethod + "')", &method);
+   if (error)
+      LOG_ERROR(error);
+   return method;
+}
+
+std::string CRANDownloadOptions()
+{
+   std::string options("options(repos = c(CRAN='" +
+                    module_context::CRANReposURL() + "')");
+   std::string method = module_context::downloadFileMethod();
+   if (!method.empty())
+      options += ", download.file.method = '" + method + "'";
+   if (method == "curl")
+   {
+      std::string extraArgs;
+      Error error = r::exec::RFunction(".rs.downloadFileExtraWithCurlArgs")
+                                                            .call(&extraArgs);
+      if (error)
+         LOG_ERROR(error);
+      options += ", download.file.extra = '" + extraArgs + "'";
+   }
+
+   options += ")";
+   return options;
+}
+
+bool haveSecureDownloadFileMethod()
+{
+   bool secure = false;
+   Error error = r::exec::RFunction(".rs.haveSecureDownloadFileMethod").call(
+                                                                      &secure);
+   if (error)
+      LOG_ERROR(error);
+   return secure;
+}
+
 shell_utils::ShellCommand RCommand::buildRCmd(const core::FilePath& rBinDir)
 {
 #if defined(_WIN32)
@@ -1826,6 +2047,24 @@ SourceMarker::Type sourceMarkerTypeFromString(const std::string& type)
 
 core::json::Array sourceMarkersAsJson(const std::vector<SourceMarker>& markers);
 
+bool isLoadBalanced()
+{
+   return !core::system::getenv(kRStudioSessionRoute).empty();
+}
+
+#ifdef _WIN32
+bool usingMingwGcc49()
+{
+   // temporarily determine this using a setting (eventually we'll want to check the
+   // R version and SVN revision number)
+   return userSettings().usingMingwGcc49();
+}
+#else
+bool usingMingwGcc49()
+{
+   return false;
+}
+#endif
 
 Error initialize()
 {
@@ -1919,6 +2158,20 @@ Error initialize()
    methodDef14.fun = (DL_FUNC) rs_restartR;
    methodDef14.numArgs = 1;
    r::routines::addCallMethod(methodDef14);
+
+   // register rs_restartR
+   R_CallMethodDef methodDef15;
+   methodDef15.name = "rs_rstudioCRANReposUrl" ;
+   methodDef15.fun = (DL_FUNC) rs_rstudioCRANReposUrl;
+   methodDef15.numArgs = 0;
+   r::routines::addCallMethod(methodDef15);
+
+   // register rs_rstudioEdition with R
+   R_CallMethodDef methodDef16 ;
+   methodDef16.name = "rs_rstudioEdition" ;
+   methodDef16.fun = (DL_FUNC) rs_rstudioEdition ;
+   methodDef16.numArgs = 0;
+   r::routines::addCallMethod(methodDef16);
    
    // register rs_isRScriptInPackageBuildTarget
    r::routines::registerCallMethod(
@@ -1943,6 +2196,12 @@ Error initialize()
             "rs_rstudioCitation",
             (DL_FUNC) rs_rstudioCitation,
             0);
+
+   // register rs_setUsingMingwGcc49
+   r::routines::registerCallMethod(
+            "rs_setUsingMingwGcc49",
+            (DL_FUNC)rs_setUsingMingwGcc49,
+            1);
    
    // initialize monitored scratch dir
    initializeMonitoredUserScratchDir();

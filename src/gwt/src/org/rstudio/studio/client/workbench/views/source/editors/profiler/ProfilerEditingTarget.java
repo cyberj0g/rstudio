@@ -37,6 +37,7 @@ import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTarget;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Position;
+import org.rstudio.studio.client.workbench.views.source.events.CollabEditStartParams;
 import org.rstudio.studio.client.workbench.views.source.events.SourceNavigationEvent;
 import org.rstudio.studio.client.workbench.views.source.model.SourceDocument;
 import org.rstudio.studio.client.workbench.views.source.model.SourceNavigation;
@@ -194,6 +195,12 @@ public class ProfilerEditingTarget implements EditingTarget
    }
    
    @Override
+   public SourcePosition currentPosition()
+   {
+      return null;
+   }
+   
+   @Override
    public void setCursorPosition(Position position)
    {
    }
@@ -222,6 +229,16 @@ public class ProfilerEditingTarget implements EditingTarget
    public void endDebugHighlighting()
    {
    } 
+   
+   @Override
+   public void beginCollabSession(CollabEditStartParams params)
+   {
+   }
+   
+   @Override
+   public void endCollabSession()
+   {
+   }
    
    public boolean onBeforeDismiss()
    {
@@ -270,7 +287,7 @@ public class ProfilerEditingTarget implements EditingTarget
       presenter_.attatch(doc_,  view_);
    }
    
-   public void onDismiss()
+   public void onDismiss(int dismissType)
    {  
       presenter_.detach();
    }

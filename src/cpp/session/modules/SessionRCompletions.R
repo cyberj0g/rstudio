@@ -127,6 +127,7 @@ assign(x = ".rs.acCompletionTypes",
       "@description ",
       "@details ",
       "@docType ",
+      "@evalRd ",
       "@example ",
       "@examples ",
       "@export",
@@ -147,10 +148,11 @@ assign(x = ".rs.acCompletionTypes",
       "@note ",
       "@noRd",
       "@param ",
+      "@rawRd ",
+      "@rawNamespace ",
       "@rdname ",
       "@references ",
       "@return ",
-      "@S3method ",
       "@section ",
       "@seealso ",
       "@slot ",
@@ -494,7 +496,7 @@ assign(x = ".rs.acCompletionTypes",
 .rs.addFunction("resolveObjectFromFunctionCall", function(functionCall,
                                                           envir)
 {
-   string <- capture.output(print(functionCall[[1]]))
+   string <- capture.output(base::print(functionCall[[1]]))[[1]]
    splat <- strsplit(string, ":{2,3}", perl = TRUE)[[1]]
    object <- NULL
    if (length(splat) == 1)
@@ -1028,7 +1030,7 @@ assign(x = ".rs.acCompletionTypes",
       {
          # Check to see if an overloaded .DollarNames method has been provided,
          # and use that to resolve names if possible.
-         dollarNamesMethod <- .rs.getDollarNamesMethod(object)
+         dollarNamesMethod <- .rs.getDollarNamesMethod(object, TRUE)
          if (is.function(dollarNamesMethod))
          {
             allNames <- dollarNamesMethod(object)
@@ -1047,7 +1049,7 @@ assign(x = ".rs.acCompletionTypes",
          # Reference class objects
          else if (inherits(object, "refClass"))
          {
-            tryCatch({
+            suppressWarnings(tryCatch({
                refClassDef <- object$.refClassDef
                allNames <- c(
                   ls(refClassDef@fieldPrototypes, all.names = TRUE),
@@ -1063,7 +1065,17 @@ assign(x = ".rs.acCompletionTypes",
                   setdiff(allNames, baseMethods),
                   baseMethods
                )
-            }, error = function(e) NULL)
+            }, error = function(e) NULL))
+         }
+         
+         # Objects for which 'names' returns non-NULL. This branch is used
+         # to provide completions for S4 objects, essentially adhering to
+         # the `.DollarNames.default` behaviour. (It looks like if an S4
+         # object is able to supply names through the `names` method, then
+         # those names are also valid for `$` completions.)
+         else if (isS4(object) && length(names(object)))
+         {
+            allNames <- .rs.getNames(object)
          }
          
          # Other objects
@@ -1470,6 +1482,17 @@ assign(x = ".rs.acCompletionTypes",
    if (.rs.isBrowserActive())
       offset <- offset + 1L
    
+   # We also need to further munge this if JIT compilation is
+   # active. It looks like it can optimize out a frame somewhere?
+   if ("compiler" %in% loadedNamespaces())
+   {
+      tryCatch({
+         compilerLevel <- compiler::getCompilerOption("optimize")
+         if (compilerLevel == 2)
+            offset <- offset - 1L
+      }, error = function(e) NULL)
+   }
+   
    .Call(.rs.routines$rs_getActiveFrame, as.integer(n) + offset)
 })
 
@@ -1587,6 +1610,17 @@ assign(x = ".rs.acCompletionTypes",
    }
 })
 
+.rs.addFunction("getCompletionsEnvironmentVariables", function(token)
+{
+   candidates <- names(Sys.getenv())
+   results <- .rs.selectFuzzyMatches(candidates, token)
+   
+   .rs.makeCompletions(token = token,
+                       results = results,
+                       quote = TRUE,
+                       type = .rs.acCompletionTypes$STRING)
+})
+
 .rs.addJsonRpcHandler("get_completions", function(token,
                                                   string,
                                                   type,
@@ -1612,7 +1646,7 @@ assign(x = ".rs.acCompletionTypes",
    
    # Inject 'params' into the global env to provide for completions in
    # parameterized R Markdown documents
-   if (length(string) && string[[1]] == "params" && .rs.injectKnitrParamsObject(documentId))
+   if (.rs.injectKnitrParamsObject(documentId))
       on.exit(.rs.removeKnitrParamsObject(), add = TRUE)
    
    # Get the currently active frame
@@ -1720,6 +1754,12 @@ assign(x = ".rs.acCompletionTypes",
       return(.rs.getCompletionsPackages(token = token,
                                         appendColons = TRUE,
                                         excludeOtherCompletions = TRUE))
+   
+   # environment variables
+   if (length(string) &&
+       string[[1]] %in% c("Sys.getenv", "Sys.setenv") &&
+       numCommas[[1]] == 0)
+      return(.rs.getCompletionsEnvironmentVariables(token))
    
    # No information on completions other than token
    if (!length(string))
@@ -2012,7 +2052,7 @@ assign(x = ".rs.acCompletionTypes",
       if (type[[i]] %in% c(.rs.acContextTypes$FUNCTION, .rs.acContextTypes$UNKNOWN))
       {
          ## Blacklist certain functions
-         if (string[[i]] %in% c("help", "str", "args"))
+         if (string[[i]] %in% c("help", "str", "args", "debug", "debugonce", "trace"))
          {
             completions$overrideInsertParens <- .rs.scalar(TRUE)
          }
@@ -2262,10 +2302,28 @@ assign(x = ".rs.acCompletionTypes",
    {
       splat <- strsplit(token, ":{2,3}", perl = TRUE)[[1]]
       pkg <- splat[[1]]
+      
       token <- if (length(splat) > 1)
          splat[[2]]
       else
          ""
+      
+      ## If the help topics for this package have not been loaded,
+      ## explicitly load and save them now.
+      if (!(pkg %in% names(aliases)))
+      {
+         pkgPath <- tryCatch(
+            find.package(pkg, quiet = TRUE),
+            error = function(e) NULL
+         )
+         
+         if (!is.null(pkgPath))
+         {
+            aliases[[pkg]] <- .rs.readAliases(pkgPath)
+            assign(helpTopicsName, aliases, pos = rsEnvPos)
+         }
+      }
+      
       aliases <- tryCatch(
          aliases[[pkg]],
          error = function(e) character()
@@ -2273,12 +2331,12 @@ assign(x = ".rs.acCompletionTypes",
    }
    
    aliases <- unlist(aliases)
-   completions <- .rs.selectFuzzyMatches(aliases, token)
+   results <- .rs.selectFuzzyMatches(aliases, token)
    
    completions <- .rs.makeCompletions(
       token = token,
-      results = completions,
-      quote = quote || grepl("[^a-zA-Z0-9._]", completions, perl = TRUE),
+      results = results,
+      quote = quote,
       type = .rs.acCompletionTypes$HELP,
       overrideInsertParens = TRUE
    )
@@ -2465,6 +2523,31 @@ assign(x = ".rs.acCompletionTypes",
    
 })
 
+.rs.addFunction("extractFunctionNameFromCall", function(object)
+{
+   if (!is.call(object))
+      return("")
+   
+   if (.rs.isSymbolCalled(object[[1]], "::") ||
+       .rs.isSymbolCalled(object[[1]], ":::") ||
+       (is.character(object[[1]]) && object[[1]] %in% c("::", ":::")))
+   {
+      if (length(object) > 2)
+         return(as.character(object[[3]]))
+      else
+         return("")
+   }
+   
+   if (is.character(object[[1]]) || is.symbol(object[[1]]))
+      return(as.character(object[[1]]))
+   
+   if (is.call(object[[1]]))
+      return(.rs.extractFunctionNameFromCall(object[[1]]))
+   
+   return("")
+   
+})
+
 .rs.addFunction("doShinyUICompletions", function(object,
                                                  inputs,
                                                  outputs,
@@ -2474,7 +2557,7 @@ assign(x = ".rs.acCompletionTypes",
 {
    if (is.call(object) && length(object) > 1)
    {
-      functionName <- as.character(object[[1]])
+      functionName <- .rs.extractFunctionNameFromCall(object)
       firstArgName <- if (is.character(object[[2]]) && length(object[[2]]) == 1)
          object[[2]]
       else

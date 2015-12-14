@@ -66,17 +66,17 @@ core::system::ProcessConfig sessionProcessConfig(
                                  context.username));
 
    // pass the project if specified
-   if (!context.scope.project.empty())
+   if (!context.scope.project().empty())
    {
       args.push_back(std::make_pair("-" kProjectSessionOptionShort,
-                                    context.scope.project));
+                                    context.scope.project()));
    }
 
    // pass the scope id if specified
-   if (!context.scope.id.empty())
+   if (!context.scope.id().empty())
    {
       args.push_back(std::make_pair("-" kScopeSessionOptionShort,
-                                    context.scope.id));
+                                    context.scope.id()));
    }
 
    // allow session timeout to be overridden via environment variable
@@ -91,6 +91,22 @@ core::system::ProcessConfig sessionProcessConfig(
                            kRStudioLimitRpcClientUid,
                            safe_convert::numberToString(uid)));
 
+   // set session scope project if we have one
+   if (!context.scope.project().empty())
+   {
+      environment.push_back(std::make_pair(
+                              kRStudioSessionScopeProject,
+                              context.scope.project()));
+   }
+
+   // set session scope id if we have one
+   if (!context.scope.id().empty())
+   {
+      environment.push_back(std::make_pair(
+                              kRStudioSessionScopeId,
+                              context.scope.id()));
+   }
+
    // log to stderr if we aren't daemonized
    if (!options.serverDaemonize())
       args.push_back(std::make_pair("--log-stderr", "1"));
@@ -99,9 +115,18 @@ core::system::ProcessConfig sessionProcessConfig(
    std::copy(extraArgs.begin(), extraArgs.end(), std::back_inserter(args));
 
    // append R environment variables
-   core::system::Options rEnvVars = r_environment::variables();
+   r_util::RVersion rVersion = r_environment::rVersion();
+   core::system::Options rEnvVars = rVersion.environment();
    environment.insert(environment.end(), rEnvVars.begin(), rEnvVars.end());
-
+   
+   // mark this as the system default R version
+   core::system::setenv(&environment,
+                        kRStudioDefaultRVersion,
+                        rVersion.number());
+   core::system::setenv(&environment,
+                        kRStudioDefaultRVersionHome,
+                        rVersion.homeDir().absolutePath());
+   
    // add monitor shared secret
    environment.push_back(std::make_pair(kMonitorSharedSecretEnvVar,
                                         options.monitorSharedSecret()));
@@ -188,6 +213,17 @@ Error SessionManager::launchSession(const r_util::SessionContext& context)
    return Success();
 }
 
+namespace {
+
+core::system::ProcessConfigFilter s_processConfigFilter;
+
+} // anonymous namespace
+
+
+void setProcessConfigFilter(const core::system::ProcessConfigFilter& filter)
+{
+   s_processConfigFilter = filter;
+}
 
 // default session launcher -- does the launch then tracks the pid
 // for later reaping
@@ -203,6 +239,7 @@ Error SessionManager::launchAndTrackSession(
    Error error = launchChildProcess(profile.executablePath,
                                     runAsUser,
                                     profile.config,
+                                    s_processConfigFilter,
                                     &pid);
    if (error)
       return error;
@@ -258,6 +295,7 @@ Error launchSession(const r_util::SessionContext& context,
    return core::system::launchChildProcess(rsessionPath,
                                            runAsUser,
                                            config,
+                                           core::system::ProcessConfigFilter(),
                                            pPid);
 }
 

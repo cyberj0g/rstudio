@@ -38,7 +38,7 @@ import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.filetypes.events.OpenDataFileEvent;
 import org.rstudio.studio.client.common.filetypes.events.OpenDataFileHandler;
 import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
+import org.rstudio.studio.client.common.filetypes.model.NavigationMethods;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
@@ -201,6 +201,7 @@ public class EnvironmentPresenter extends BasePresenter
          {
             loadNewContextState(event.getContextDepth(), 
                   event.getEnvironmentName(),
+                  event.getFunctionEnvName(),
                   event.environmentIsLocal(),
                   event.getCallFrames(),
                   event.useProvidedSource(),
@@ -279,7 +280,7 @@ public class EnvironmentPresenter extends BasePresenter
                   event.getFileName());
             eventBus_.fireEvent(new OpenSourceFileEvent(destFile, pos,
                                    FileTypeRegistry.R,
-                                   NavigationMethod.Default));
+                                   NavigationMethods.DEFAULT));
          }
       });
       
@@ -540,6 +541,7 @@ public class EnvironmentPresenter extends BasePresenter
    {
       loadNewContextState(environmentState.contextDepth(),
             environmentState.environmentName(),
+            environmentState.functionEnvName(),
             environmentState.environmentIsLocal(),
             environmentState.callFrames(),
             environmentState.useProvidedSource(),
@@ -578,6 +580,7 @@ public class EnvironmentPresenter extends BasePresenter
 
    private void loadNewContextState(int contextDepth, 
          String environmentName,
+         String functionEnvName,
          boolean isLocalEvironment, 
          JsArray<CallFrame> callFrames,
          boolean useBrowseSources,
@@ -585,6 +588,7 @@ public class EnvironmentPresenter extends BasePresenter
    {
       boolean enteringDebugMode = setContextDepth(contextDepth);
       environmentName_ = environmentName;
+      functionEnvName_ = functionEnvName;
       view_.setEnvironmentName(environmentName_, isLocalEvironment);
       if (callFrames != null && 
           callFrames.length() > 0 &&
@@ -682,8 +686,8 @@ public class EnvironmentPresenter extends BasePresenter
                                 (FilePosition) currentBrowsePosition_.cast(),
                                 FileTypeRegistry.R,
                                 debugging ? 
-                                      NavigationMethod.DebugStep :
-                                      NavigationMethod.DebugEnd));
+                                      NavigationMethods.DEBUG_STEP :
+                                      NavigationMethods.DEBUG_END));
       }
 
       // otherwise, if we have a copy of the source from the server, load
@@ -693,40 +697,57 @@ public class EnvironmentPresenter extends BasePresenter
       {
          if (debugging)
          {
+            // create the function name for the code browser by removing the
+            // () indicator supplied by the server
+            String functionName = environmentName_;
+            int idx = functionName.indexOf('(');
+            if (idx > 0)
+            {
+               functionName = functionName.substring(0, idx);
+            }
+            
+            // omit qualifiers
+            idx = functionName.indexOf("::");
+            if (idx > 0)
+            {
+               functionName = functionName.substring(idx + 1);
+               // :::, too
+               if (functionName.startsWith(":"))
+                  functionName = functionName.substring(1);
+            }
+               
+            // create the function definition
+            searchFunction_ = 
+                  SearchPathFunctionDefinition.create(
+                     functionName, 
+                     StringUtil.isNullOrEmpty(functionEnvName_) ? 
+                           "debugging" : functionEnvName_, 
+                     currentBrowseSource_,
+                     true);
+
             if (sourceChanged)
             {
-               // create the function name for the code browser by removing the
-               // () indicator supplied by the server
-               String functionName = environmentName_;
-               int idx = functionName.indexOf('(');
-               if (idx > 0)
-               {
-                  functionName = functionName.substring(0, idx);
-               }
                // if this is a different source file than we already have open,
                // open it 
                eventBus_.fireEvent(new CodeBrowserNavigationEvent(
-                     SearchPathFunctionDefinition.create(
-                           functionName, 
-                           "debugging", 
-                           currentBrowseSource_,
-                           true),
+                     searchFunction_,
                      currentBrowsePosition_.functionRelativePosition(
                            currentFunctionLineNumber_),
-                     contextDepth_ == 1));
+                     contextDepth_ == 1, false));
             }
             else if (currentBrowsePosition_.getLine() > 0)
             {
                // if this is the same one currently open, just move the 
                // highlight
                eventBus_.fireEvent(new CodeBrowserHighlightEvent(
+                     searchFunction_,
                      currentBrowsePosition_.functionRelativePosition(
                            currentFunctionLineNumber_)));
             }
          }
          else
          {
-            eventBus_.fireEvent(new CodeBrowserFinishedEvent());
+            eventBus_.fireEvent(new CodeBrowserFinishedEvent(searchFunction_));
          }
       }
    }
@@ -888,5 +909,7 @@ public class EnvironmentPresenter extends BasePresenter
    private boolean useCurrentBrowseSource_;
    private String currentBrowseSource_;
    private String environmentName_;
+   private String functionEnvName_;
    private Timer requeryContextTimer_;
+   private SearchPathFunctionDefinition searchFunction_;
 }

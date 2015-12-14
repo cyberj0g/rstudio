@@ -38,6 +38,10 @@ public class Mode extends JavaScriptObject
    protected Mode()
    {
    }
+   
+   public native final boolean hasCodeModel() /*-{
+      return typeof this.codeModel !== "undefined";
+   }-*/;
 
    public native final CodeModel getCodeModel() /*-{
       return this.codeModel || {};
@@ -78,4 +82,13 @@ public class Mode extends JavaScriptObject
    }-*/;
    
    public native final String getId() /*-{ return this.$id; }-*/;
+   
+   public native final void setHighlightRFunctionCalls(boolean show) /*-{
+      this.setHighlightRFunctionCalls && this.setHighlightRFunctionCalls(show);
+   }-*/;
+   
+   public native final void setInsertMatching(boolean value) /*-{
+      this.insertMatching = value;
+   }-*/;
+   
 }

@@ -33,6 +33,9 @@
 #include <session/SessionModuleContext.hpp>
 
 #include <session/projects/ProjectsSettings.hpp>
+#include <session/projects/SessionProjectSharing.hpp>
+
+#include <sys/stat.h>
 
 #include "SessionProjectFirstRun.hpp"
 
@@ -46,7 +49,14 @@ namespace {
 
 bool canWriteToProjectDir(const FilePath& projectDirPath)
 {
-   FilePath testFile = projectDirPath.complete(core::system::generateUuid());
+   std::string prefix(
+#ifndef _WIN32
+   "."
+#endif 
+   "write-test-");
+
+   FilePath testFile = projectDirPath.complete(prefix +
+         core::system::generateUuid());
    Error error = core::writeStringToFile(testFile, "test");
    if (error)
    {
@@ -65,7 +75,8 @@ bool canWriteToProjectDir(const FilePath& projectDirPath)
 }  // anonymous namespace
 
 
-Error computeScratchPath(const FilePath& projectFile, FilePath* pScratchPath)
+Error computeScratchPaths(const FilePath& projectFile, 
+      FilePath* pScratchPath, FilePath* pSharedScratchPath)
 {
    // ensure project user dir
    FilePath projectUserDir = projectFile.parent().complete(".Rproj.user");
@@ -85,13 +96,30 @@ Error computeScratchPath(const FilePath& projectFile, FilePath* pScratchPath)
    }
 
    // now add context id to form scratch path
-   FilePath scratchPath = projectUserDir.complete(userSettings().contextId());
-   Error error = scratchPath.ensureDirectory();
-   if (error)
-      return error;
+   if (pScratchPath)
+   {
+      FilePath scratchPath = projectUserDir.complete(userSettings().contextId());
+      Error error = scratchPath.ensureDirectory();
+      if (error)
+         return error;
 
-   // return the path
-   *pScratchPath = scratchPath;
+      // return the path
+      *pScratchPath = scratchPath;
+   }
+
+   // add "shared" to form shared path (shared among all sessions that have
+   // this project open)
+   if (pSharedScratchPath)
+   {
+      FilePath sharedScratchPath = projectUserDir.complete("shared");
+      Error error = sharedScratchPath.ensureDirectory();
+      if (error)
+         return error;
+
+      // return the path
+      *pSharedScratchPath = sharedScratchPath;
+   }
+
    return Success();
 }
 
@@ -146,7 +174,9 @@ Error ProjectContext::startup(const FilePath& projectFile,
 
    // calculate project scratch path
    FilePath scratchPath;
-   Error error = computeScratchPath(projectFile, &scratchPath);
+   FilePath sharedScratchPath;
+   Error error = computeScratchPaths(projectFile, &scratchPath,
+         &sharedScratchPath);
    if (error)
    {
       *pUserErrMsg = "unable to initialize project - " + error.summary();
@@ -188,6 +218,7 @@ Error ProjectContext::startup(const FilePath& projectFile,
    file_ = projectFile;
    directory_ = file_.parent();
    scratchPath_ = scratchPath;
+   sharedScratchPath_ = sharedScratchPath;
    config_ = config;
 
    // assume true so that the initial files pane listing doesn't register
@@ -207,14 +238,15 @@ void ProjectContext::augmentRbuildignore()
       // constants
       const char * const kIgnoreRproj = "^.*\\.Rproj$";
       const char * const kIgnoreRprojUser = "^\\.Rproj\\.user$";
-
+      const std::string newLine = "\n";
+      
       // create the file if it doesn't exists
       FilePath rbuildIgnorePath = directory().childPath(".Rbuildignore");
       if (!rbuildIgnorePath.exists())
       {
          Error error = writeStringToFile(rbuildIgnorePath,
-                                         kIgnoreRproj + std::string("\n") +
-                                         kIgnoreRprojUser + std::string("\n"),
+                                         kIgnoreRproj + newLine +
+                                         kIgnoreRprojUser + newLine,
                                          string_utils::LineEndingNative);
          if (error)
             LOG_ERROR(error);
@@ -247,11 +279,11 @@ void ProjectContext::augmentRbuildignore()
                                 && strIgnore[strIgnore.size() - 1] != '\n';
 
          if (addExtraNewline)
-            strIgnore += "\n";
+            strIgnore += newLine;
          if (!hasRProj)
-            strIgnore += kIgnoreRproj + std::string("\n");
+            strIgnore += kIgnoreRproj + newLine;
          if (!hasRProjUser)
-            strIgnore += kIgnoreRprojUser + std::string("\n");
+            strIgnore += kIgnoreRprojUser + newLine;
          error = core::writeStringToFile(rbuildIgnorePath,
                                          strIgnore,
                                          string_utils::LineEndingNative);
@@ -281,6 +313,8 @@ SEXP rs_hasFileMonitor()
 
 Error ProjectContext::initialize()
 {
+   using namespace module_context;
+
    r::routines::registerCallMethod(
             "rs_getProjectDirectory",
             (DL_FUNC) rs_getProjectDirectory,
@@ -293,6 +327,9 @@ Error ProjectContext::initialize()
    
    if (hasProject())
    {
+      // update activeSession
+      activeSession().setProject(createAliasedPath(directory()));
+
       // read build options for the side effect of updating buildOptions_
       RProjectBuildOptions buildOptions;
       Error error = readBuildOptions(&buildOptions);
@@ -318,7 +355,11 @@ Error ProjectContext::initialize()
                       boost::bind(&ProjectContext::onDeferredInit, this, _1));
       }
    }
-
+   else
+   {
+      // update activeSession
+      activeSession().setProject(kProjectNone);
+   }
    return Success();
 }
 
@@ -659,6 +700,39 @@ bool ProjectContext::isPackageProject()
    return r_util::isPackageDirectory(directory());
 }
 
+bool ProjectContext::supportsSharing()
+{
+   // never supports sharing if disabled explicitly
+   if (!core::system::getenv(kRStudioDisableProjectSharing).empty())
+      return false;
+
+   // otherwise, check to see whether shared storage is configured
+   return !options().getOverlayOption(kSessionSharedStoragePath).empty();
+}
+
+// attempts to determine whether we're the owner of the project; currently
+// this is inferred from ownership on the project directory
+bool ProjectContext::ownedByUser()
+{
+#ifdef _WIN32
+   // we don't need to know this on Windows, and we'd need to compute it very
+   // differently
+   return true;
+#else
+   struct stat st; 
+   if (::stat(directory().absolutePath().c_str(), &st) == -1) 
+   {
+      Error error = systemError(errno, ERROR_LOCATION);
+      error.addProperty("path", directory().absolutePath());
+      LOG_ERROR(error);
+
+      // if we can't figure it out, presume we're the owner (this preserves
+      // existing behavior) 
+      return true;
+   }
+   return st.st_uid == ::getuid();
+#endif
+}
 
 } // namespace projects
 } // namespace session

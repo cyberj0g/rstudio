@@ -147,6 +147,14 @@ public class WindowEx extends JavaScriptObject
       return this.outerWidth;
    }-*/;
    
+   public final native int getInnerHeight() /*-{
+      return this.innerHeight;
+   }-*/;
+
+   public final native int getInnerWidth() /*-{
+      return this.innerWidth;
+   }-*/;
+   
    public final native void scrollTo(int x, int y) /*-{
       this.scrollTo(x, y);
    }-*/;
@@ -159,6 +167,14 @@ public class WindowEx extends JavaScriptObject
       return this.scrollY;
    }-*/;
    
+   public final native int getScreenX() /*-{
+      return this.screenX;
+   }-*/;
+   
+   public final native int getScreenY() /*-{
+      return this.screenY;
+   }-*/;
+
    public final native void postMessage(JavaScriptObject data, 
                                         String origin) /*-{
       this.postMessage(data, origin);

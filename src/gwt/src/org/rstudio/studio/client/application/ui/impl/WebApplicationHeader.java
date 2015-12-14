@@ -15,16 +15,21 @@
 
 package org.rstudio.studio.client.application.ui.impl;
 
+import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.dom.client.ImageElement;
 import com.google.gwt.dom.client.Style;
+import com.google.gwt.dom.client.Style.Cursor;
 import com.google.gwt.dom.client.Style.Position;
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.event.dom.client.ClickEvent;
 import com.google.gwt.event.dom.client.ClickHandler;
 import com.google.gwt.event.logical.shared.CloseEvent;
 import com.google.gwt.event.logical.shared.CloseHandler;
+import com.google.gwt.resources.client.ClientBundle;
+import com.google.gwt.resources.client.ImageResource;
+import com.google.gwt.user.client.Window;
 import com.google.gwt.user.client.ui.*;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
@@ -37,8 +42,12 @@ import org.rstudio.core.client.theme.res.ThemeStyles;
 import org.rstudio.core.client.widget.HyperlinkLabel;
 import org.rstudio.core.client.widget.MessageDialogLabel;
 import org.rstudio.core.client.widget.ToolbarButton;
+import org.rstudio.core.client.widget.ToolbarLabel;
+import org.rstudio.core.client.widget.ToolbarSeparator;
 import org.rstudio.core.client.widget.events.GlassVisibilityEvent;
 import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.application.ApplicationUtils;
+import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.application.events.LogoutRequestedEvent;
 import org.rstudio.studio.client.application.ui.ApplicationHeader;
@@ -55,8 +64,10 @@ import org.rstudio.studio.client.workbench.events.SessionInitHandler;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.SessionInfo;
 
-public class WebApplicationHeader extends Composite implements ApplicationHeader
-{
+public class WebApplicationHeader extends Composite 
+                                  implements ApplicationHeader,
+                                  WebApplicationHeaderOverlay.Context
+{  
    public WebApplicationHeader()
    {
       RStudioGinjector.INSTANCE.injectMembers(this);
@@ -71,8 +82,10 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
                   final Session session,
                   Provider<CodeSearch> pCodeSearch)
    {
+      commands_ = commands;
       eventBus_ = eventBus;
       globalDisplay_ = globalDisplay; 
+      overlay_ = new WebApplicationHeaderOverlay();
       
       // Use the outer panel to just aggregate the menu bar/account area,
       // with the logo. The logo can't be inside the HorizontalPanel because
@@ -83,6 +96,7 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
       
       // large logo
       logoLarge_ = new Image(ThemeResources.INSTANCE.rstudio());
+      logoLarge_.addClickHandler(logoClickHandler_);
       ((ImageElement)logoLarge_.getElement().cast()).setAlt("RStudio");
       Style style = logoLarge_.getElement().getStyle();
       style.setPosition(Position.ABSOLUTE);
@@ -91,6 +105,7 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
       
       // small logo
       logoSmall_ = new Image(ThemeResources.INSTANCE.rstudio_small());
+      logoSmall_.addClickHandler(logoClickHandler_);
       ((ImageElement)logoSmall_.getElement().cast()).setAlt("RStudio");
       style = logoSmall_.getElement().getStyle();
       style.setPosition(Position.ABSOLUTE);
@@ -141,13 +156,12 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
       });
       headerBarPanel_.add(mainMenu_);
 
-      HTML spacer = new HTML();
-      headerBarPanel_.add(spacer);
-      headerBarPanel_.setCellWidth(spacer, "100%");
-
       // commands panel (no widgets added until after session init)
       headerBarCommandsPanel_ = new HorizontalPanel();
+      headerBarCommandsPanel_.setVerticalAlignment(HasVerticalAlignment.ALIGN_MIDDLE);
+      headerBarCommandsPanel_.setWidth("100%");
       headerBarPanel_.add(headerBarCommandsPanel_);
+      headerBarPanel_.setCellWidth(headerBarCommandsPanel_, "100%");
       headerBarPanel_.setCellHorizontalAlignment(headerBarCommandsPanel_,
                                                 HorizontalPanel.ALIGN_RIGHT);
 
@@ -157,20 +171,42 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
          {
             SessionInfo sessionInfo = session.getSessionInfo();
             
-            // only show the user identity if we are in server mode
-           if (sessionInfo.getShowIdentity())
-               initCommandsPanel(sessionInfo);
-            
             // complete toolbar initialization
             toolbar_.completeInitialization(sessionInfo);
-            
+             
             // add project tools to main menu
+            projectMenuSeparator_ = createCommandSeparator();
+            headerBarPanel_.add(projectMenuSeparator_);
             projectMenuButton_ = 
                new ProjectPopupMenu(sessionInfo, commands).getToolbarButton();
             projectMenuButton_.addStyleName(
                        ThemeStyles.INSTANCE.webHeaderBarCommandsProjectMenu());
             headerBarPanel_.add(projectMenuButton_);
-            showProjectMenu(!toolbar_.isVisible());     
+            showProjectMenu(!toolbar_.isVisible());
+                
+            // record logo target url (if any)
+            logoTargetUrl_ = sessionInfo.getUserHomePageUrl();
+            if (logoTargetUrl_ != null)
+            {
+               // convert to full url so we get any url custom prefex
+               logoTargetUrl_ = 
+                  ApplicationUtils.getHostPageBaseURLWithoutContext(false) +
+                  logoTargetUrl_;
+               logoLarge_.setResource(ThemeResources.INSTANCE.rstudio_home());
+               logoLarge_.getElement().getStyle().setCursor(Cursor.POINTER);
+               logoLarge_.setTitle("RStudio Server Home");
+               logoSmall_.setResource(ThemeResources.INSTANCE.rstudio_home_small());
+               logoSmall_.getElement().getStyle().setCursor(Cursor.POINTER);
+               logoSmall_.setTitle(logoLarge_.getTitle());
+            }
+            
+            // init commands panel in server mode
+            if (!Desktop.isDesktop())
+               initCommandsPanel(sessionInfo);
+                      
+            // notify overlay of global toolbar state
+            overlay_.setGlobalToolbarVisible(WebApplicationHeader.this, 
+                                             toolbar_.isVisible());
          }
       });
       
@@ -179,7 +215,11 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
                                    eventBus,
                                    pCodeSearch);
       toolbar_.addStyleName(themeResources.themeStyles().webGlobalToolbar());
-     
+      
+      // create host for project commands
+      projectBarCommandsPanel_ = new HorizontalPanel();
+      toolbar_.addRightWidget(projectBarCommandsPanel_);
+      
       // initialize widget
       initWidget(outerPanel_);
    }
@@ -190,22 +230,24 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
       
       if (showToolbar)
       {
+         outerPanel_.add(logoLarge_);
          HeaderPanel headerPanel = new HeaderPanel(headerBarPanel_, toolbar_);
          outerPanel_.add(headerPanel);
-         outerPanel_.add(logoLarge_);
          mainMenu_.getElement().getStyle().setMarginLeft(18, Unit.PX);
          preferredHeight_ = 65;
          showProjectMenu(false);
       }
       else
       {
+         outerPanel_.add(logoSmall_);
          MenubarPanel menubarPanel = new MenubarPanel(headerBarPanel_);
          outerPanel_.add(menubarPanel);
-         outerPanel_.add(logoSmall_);
          mainMenu_.getElement().getStyle().setMarginLeft(0, Unit.PX);
          preferredHeight_ = 45;
          showProjectMenu(true);
       }
+      
+      overlay_.setGlobalToolbarVisible(this, showToolbar);
    }
    
    public boolean isToolbarVisible()
@@ -220,10 +262,19 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
    
    private void showProjectMenu(boolean show)
    {
+      projectMenuSeparator_.setVisible(show);
       projectMenuButton_.setVisible(show);
    }
    
-   
+   private ClickHandler logoClickHandler_ = new ClickHandler() {
+
+      @Override
+      public void onClick(ClickEvent event)
+      {
+         if (logoTargetUrl_ != null)
+            Window.Location.assign(logoTargetUrl_);
+      }
+   };
 
    private native final void suppressBrowserForwardBack() /*-{
       try {
@@ -259,8 +310,8 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
          {
             MessageDialogLabel label = new MessageDialogLabel();
             label.setHtml("Your browser does not allow access to your<br/>" +
-            		        "computer's clipboard. As a result you must<br/>" +
-            		        "use keyboard shortcuts for:" +
+                          "computer's clipboard. As a result you must<br/>" +
+                          "use keyboard shortcuts for:" +
                           "<br/><br/><table cellpadding=0 cellspacing=0 border=0>" +
                           makeRow(commands.undoDummy()) +
                           makeRow(commands.redoDummy()) +
@@ -336,24 +387,43 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
    private void initCommandsPanel(final SessionInfo sessionInfo)
    {  
       // add username 
-      Label usernameLabel = new Label();
-      usernameLabel.setText(sessionInfo.getUserIdentity());
-      headerBarCommandsPanel_.add(usernameLabel);
-      headerBarCommandsPanel_.add(createCommandSeparator());
-          
-      // signout link 
-      Widget signoutLink = createCommandLink("Sign Out", new ClickHandler() {
-         public void onClick(ClickEvent event)
-         {
-            eventBus_.fireEvent(new LogoutRequestedEvent());
-         }
-      });
-      headerBarCommandsPanel_.add(signoutLink);
+      if (sessionInfo.getShowIdentity())
+      {
+         ToolbarLabel usernameLabel = new ToolbarLabel();
+         usernameLabel.getElement().getStyle().setMarginRight(2, Unit.PX);
+         if (!BrowseCap.isFirefox())
+            usernameLabel.getElement().getStyle().setMarginTop(2, Unit.PX);
+         String userIdentity = sessionInfo.getUserIdentity();
+         usernameLabel.setTitle(userIdentity);
+         userIdentity = userIdentity.split("@")[0];
+         usernameLabel.setText(userIdentity);
+         headerBarCommandsPanel_.add(usernameLabel);
+        
+         ToolbarButton signOutButton = new ToolbarButton(RESOURCES.signOut(),
+              new ClickHandler() {
+            public void onClick(ClickEvent event)
+            {
+               eventBus_.fireEvent(new LogoutRequestedEvent());
+            }
+         });
+         signOutButton.setTitle("Sign out");
+         headerBarCommandsPanel_.add(signOutButton);
+         headerBarCommandsPanel_.add(
+                  signOutSeparator_ = createCommandSeparator());
+      }
+      
+      overlay_.addCommands(this);
+      
+      headerBarCommandsPanel_.add(commands_.quitSession().createToolbarButton());
    }
 
    private Widget createCommandSeparator()
    {
-      return new HTML("&nbsp;|&nbsp;");
+      ToolbarSeparator sep = new ToolbarSeparator();
+      Style style = sep.getElement().getStyle();
+      style.setMarginTop(2, Unit.PX);
+      style.setMarginLeft(3, Unit.PX);
+      return sep;
    }
    
    private Widget createCommandLink(String caption, ClickHandler clickHandler)
@@ -361,23 +431,112 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
       HyperlinkLabel link = new HyperlinkLabel(caption, clickHandler);
       return link;
    }
+   
+   @Override
+   public void addCommand(Widget widget)
+   {
+      headerBarCommandsPanel_.add(widget);
+   }
+
+   @Override
+   public Widget addCommandSeparator()
+   {
+      Widget separator = createCommandSeparator();
+      headerBarCommandsPanel_.add(separator);
+      return separator;
+   }
+   
+   @Override
+   public void addLeftCommand(Widget widget)
+   {
+      addLeftCommand(widget, null);
+   }
+
+   @Override
+   public void addLeftCommand(Widget widget, String width)
+   {
+      headerBarCommandsPanel_.insert(widget, 0);
+      if (width != null)
+      {
+         headerBarCommandsPanel_.setCellWidth(widget, width);
+      }
+   }
+
+   @Override
+   public void addRightCommand(Widget widget)
+   {
+      headerBarPanel_.add(widget);
+   }
+   
+   @Override
+   public Widget addRightCommandSeparator()
+   {
+      Widget separator = createCommandSeparator();
+      headerBarPanel_.add(separator);
+      return separator;
+   }
+   
+   @Override
+   public void addProjectCommand(Widget widget)
+   {
+      projectBarCommandsPanel_.add(widget);
+   }
+
+   @Override
+   public Widget addProjectCommandSeparator()
+   {
+      Widget separator = createCommandSeparator();
+      projectBarCommandsPanel_.add(separator);
+      return separator;
+   }
+   
+   @Override
+   public void addProjectRightCommand(Widget widget)
+   {
+      toolbar_.addRightWidget(widget);   
+   }
+
+   @Override
+   public Widget addProjectRightCommandSeparator()
+   {
+      return toolbar_.addRightSeparator();
+   }
+   
+   @Override
+   public AppMenuBar getMainMenu()
+   {
+      return mainMenu_;
+   }
+   
 
    public Widget asWidget()
    {
       return this;
    }
+   
+   interface Resources extends ClientBundle
+   {
+      ImageResource signOut();
+   }
+   
+   private static final Resources RESOURCES =  
+                              (Resources) GWT.create(Resources.class);
   
    private int preferredHeight_;
    private FlowPanel outerPanel_;
    private Image logoLarge_;
    private Image logoSmall_;
+   private String logoTargetUrl_ = null;
    private HorizontalPanel headerBarPanel_;
    private HorizontalPanel headerBarCommandsPanel_;
+   private HorizontalPanel projectBarCommandsPanel_;
+   private Widget signOutSeparator_;
+   private Widget projectMenuSeparator_;
    private ToolbarButton projectMenuButton_;
    private AppMenuBar mainMenu_;
    private GlobalToolbar toolbar_;
    private EventBus eventBus_;
    private GlobalDisplay globalDisplay_;
-   
-   
+   private Commands commands_; 
+   private WebApplicationHeaderOverlay overlay_;
 }

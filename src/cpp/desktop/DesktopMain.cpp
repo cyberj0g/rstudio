@@ -64,6 +64,11 @@ void initializeWorkingDirectory(int argc,
                                 char* argv[],
                                 const QString& filename)
 {
+   // bail if we've already got a working directory as a result of
+   // a call to openSessionInNewWindow
+   if (!core::system::getenv(kRStudioInitialWorkingDir).empty())
+      return;
+
    // calculate what our initial working directory should be
    std::string workingDir;
 
@@ -306,7 +311,7 @@ int main(int argc, char* argv[])
          scriptsPath = currentPath.complete("desktop");
 #ifdef _WIN32
          if (version.architecture() == ArchX64)
-            sessionPath = installPath.complete("x64/rsession");
+            sessionPath = installPath.complete("session/x64/rsession");
 #endif
       }
 #endif

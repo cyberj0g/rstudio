@@ -128,6 +128,22 @@ const int kEnableRStudioConnect = 103;
 const int kUpdateGutterMarkers = 104;
 const int kSnippetsChanged = 105;
 const int kJumpToFunction = 106;
+const int kCollabEditStarted = 107;
+const int kSessionCountChanged = 108;
+const int kCollabEditEnded = 109;
+const int kProjectUsersChanged = 110;
+const int kRVersionsChanged = 111;
+const int kShinyGadgetDialog = 112;
+const int kRmdParamsReady = 113;
+const int kRegisterUserCommand = 114;
+const int kRmdRSConnectDeploymentFailed = 115;
+const int kReplaceRanges = 117;
+const int kGetActiveDocumentContext = 118;
+const int kSendToConsole = 119;
+const int kUserFollowStarted = 120;
+const int kUserFollowEnded = 121;
+const int kProjectAccessRevoked = 122;
+const int kCollabEditSaved = 123;
 }
 
 void ClientEvent::init(int type, const json::Value& data)
@@ -321,6 +337,8 @@ std::string ClientEvent::typeName() const
          return "rsconnect_deployment_output";
       case client_events::kRmdRSConnectDeploymentCompleted:
          return "rsconnect_deployment_completed";
+      case client_events::kRmdRSConnectDeploymentFailed:
+         return "rsconnect_deployment_failed";
       case client_events::kUserPrompt:
          return "user_prompt";
       case client_events::kInstallRtools:
@@ -343,6 +361,36 @@ std::string ClientEvent::typeName() const
          return "snippets_changed";
       case client_events::kJumpToFunction:
          return "jump_to_function";
+      case client_events::kCollabEditStarted:
+         return "collab_edit_started";
+      case client_events::kSessionCountChanged:
+         return "session_count_changed";
+      case client_events::kCollabEditEnded:
+         return "collab_edit_ended";
+      case client_events::kProjectUsersChanged:
+         return "project_users_changed";
+      case client_events::kRVersionsChanged:
+         return "r_versions_changed";
+      case client_events::kShinyGadgetDialog:
+         return "shiny_gadget_dialog";
+      case client_events::kRmdParamsReady:
+         return "rmd_params_ready";
+      case client_events::kRegisterUserCommand:
+         return "register_user_command";
+      case client_events::kReplaceRanges:
+         return "replace_ranges";
+      case client_events::kGetActiveDocumentContext:
+         return "get_active_document_context";
+      case client_events::kSendToConsole:
+         return "send_to_console";
+      case client_events::kUserFollowStarted:
+         return "user_follow_started";
+      case client_events::kUserFollowEnded:
+         return "user_follow_ended";
+      case client_events::kProjectAccessRevoked:
+         return "project_access_revoked";
+      case client_events::kCollabEditSaved:
+         return "collab_edit_saved";
       default:
          LOG_WARNING_MESSAGE("unexpected event type: " + 
                              safe_convert::numberToString(type_));
